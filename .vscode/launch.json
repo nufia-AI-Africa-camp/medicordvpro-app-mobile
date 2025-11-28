@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter: Run with Supabase",
+      "type": "dart",
+      "request": "launch",
+      "program": "lib/main.dart",
+      "args": [
+        "--dart-define",
+        "SUPABASE_URL=https://jyawxsitqwfeolgnanvj.supabase.co",
+        "--dart-define",
+        "SUPABASE_ANON_KEY=sb_publishable_YX5CMRZ5-ia0jirUCHWktg_tml9YMb5"
+      ]
+    }
+  ]
+}
+

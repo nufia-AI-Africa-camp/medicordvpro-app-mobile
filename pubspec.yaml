@@ -1,0 +1,28 @@
+name: medicro_rdv
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.10.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Routing
+  go_router: ^14.0.0
+
+  # State management
+  flutter_riverpod: ^2.5.0
+  supabase_flutter: ^2.5.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
