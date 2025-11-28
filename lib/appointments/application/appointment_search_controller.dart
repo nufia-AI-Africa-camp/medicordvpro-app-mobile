@@ -48,6 +48,22 @@ class AppointmentSearchController
 
   final AppointmentService _service;
 
+  /// Met à jour la requête de recherche
+  void updateQuery(String query) {
+    state = state.copyWith(query: query);
+  }
+
+  /// Met à jour le filtre de spécialité
+  void updateSpeciality(String? speciality) {
+    state = state.copyWith(speciality: speciality);
+  }
+
+  /// Met à jour le filtre de centre
+  void updateCentre(String? centre) {
+    state = state.copyWith(centre: centre);
+  }
+
+  /// Lance la recherche avec les filtres actuels
   Future<void> search() async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
@@ -60,9 +76,16 @@ class AppointmentSearchController
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        errorMessage: 'Erreur lors de la recherche',
+        errorMessage: e.toString().contains('Erreur')
+            ? e.toString()
+            : 'Erreur lors de la recherche: ${e.toString()}',
       );
     }
+  }
+
+  /// Réinitialise la recherche
+  void reset() {
+    state = AppointmentSearchState.empty;
   }
 }
 

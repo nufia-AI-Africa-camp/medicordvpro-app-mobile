@@ -8,6 +8,7 @@ import '../../appointments/presentation/new_appointment_screen.dart';
 import '../../history/presentation/history_screen.dart';
 import '../../notifications/presentation/notifications_screen.dart';
 import '../../profile/presentation/profile_screen.dart';
+import '../application/dashboard_controller.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -28,7 +29,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final patient = authState.patient;
 
     final tabs = [
-      _DashboardHomeTab(patient: patient),
+      _DashboardHomeTab(
+        patient: patient,
+        onNavigateToTab: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+      ),
       const NewAppointmentScreen(),
       const AppointmentsListScreen(),
       const HistoryScreen(),
@@ -77,10 +85,60 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 }
 
-class _DashboardHomeTab extends StatelessWidget {
-  const _DashboardHomeTab({required this.patient});
+class _DashboardHomeTab extends ConsumerStatefulWidget {
+  const _DashboardHomeTab({
+    required this.patient,
+    required this.onNavigateToTab,
+  });
 
   final Patient? patient;
+  final ValueChanged<int> onNavigateToTab;
+
+  @override
+  ConsumerState<_DashboardHomeTab> createState() => _DashboardHomeTabState();
+}
+
+class _DashboardHomeTabState extends ConsumerState<_DashboardHomeTab> {
+  @override
+  void initState() {
+    super.initState();
+    // Charger les données au démarrage
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final authState = ref.read(authControllerProvider);
+      final patientId = authState.patient?.id;
+      if (patientId != null) {
+        ref.read(dashboardControllerProvider.notifier).load(patientId);
+      }
+    });
+  }
+
+  String _formatDate(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    return '$day/$month/${date.year}';
+  }
+
+  String _formatTime(DateTime date) {
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  String _getDaysUntil(DateTime date) {
+    final now = DateTime.now();
+    final difference = date.difference(now);
+    final days = difference.inDays;
+    
+    if (days < 0) {
+      return 'Passé';
+    } else if (days == 0) {
+      return "Aujourd'hui";
+    } else if (days == 1) {
+      return 'Demain';
+    } else {
+      return '$days jours';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,15 +146,33 @@ class _DashboardHomeTab extends StatelessWidget {
     const secondaryBlue = Color(0xFF3F7CFF);
     const backgroundColor = Color(0xFFF5F7FF);
 
-    final firstName = (patient?.firstName ?? '').isNotEmpty
-        ? patient!.firstName
+    final authState = ref.watch(authControllerProvider);
+    final patientId = authState.patient?.id;
+    final dashboardState = patientId != null
+        ? ref.watch(dashboardControllerProvider)
+        : null;
+
+    final firstName = (widget.patient?.firstName ?? '').isNotEmpty
+        ? widget.patient!.firstName
         : 'Marie';
+
+    final nextAppointment = dashboardState?.nextAppointment;
+    final medecin = nextAppointment?.medecin;
+    final medecinName = medecin != null
+        ? 'Dr. ${medecin.firstName} ${medecin.lastName}'
+        : null;
 
     return Container(
       color: backgroundColor,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      child: RefreshIndicator(
+        onRefresh: () async {
+          if (patientId != null) {
+            await ref.read(dashboardControllerProvider.notifier).refresh(patientId);
+          }
+        },
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
           // Carte bleue de bienvenue + prochain rendez-vous
           Container(
             padding: const EdgeInsets.all(16),
@@ -140,74 +216,121 @@ class _DashboardHomeTab extends StatelessWidget {
                 const SizedBox(height: 16),
 
                 // Bloc prochain rendez-vous (résumé)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    color: Colors.white.withOpacity(0.12),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.2),
+                if (nextAppointment != null && medecinName != null)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.white.withOpacity(0.12),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Prochain rendez-vous',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '$medecinName • ${_formatDate(nextAppointment.dateTime)} à ${_formatTime(nextAppointment.dateTime)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            color: Colors.white,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _getDaysUntil(nextAppointment.dateTime) == "Aujourd'hui"
+                                    ? '0'
+                                    : _getDaysUntil(nextAppointment.dateTime) == 'Demain'
+                                        ? '1'
+                                        : _getDaysUntil(nextAppointment.dateTime).split(' ')[0],
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  color: primaryBlue,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _getDaysUntil(nextAppointment.dateTime) == "Aujourd'hui"
+                                    ? "aujourd'hui"
+                                    : _getDaysUntil(nextAppointment.dateTime) == 'Demain'
+                                        ? 'jour'
+                                        : 'jours',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: primaryBlue,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.white.withOpacity(0.12),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.2),
+                      ),
+                    ),
+                    child: const Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Prochain rendez-vous',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Aucun rendez-vous à venir',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text(
-                              'Prochain rendez-vous',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Dr. Sophie Martin • 05/12/2025 à 09:00',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          color: Colors.white,
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Text(
-                              '9',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                                color: primaryBlue,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'jours',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: primaryBlue,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
@@ -224,52 +347,60 @@ class _DashboardHomeTab extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Row(
-            children: const [
+            children: [
               Expanded(
                 child: _DashboardStatCard(
                   label: 'À venir',
-                  value: '1',
+                  value: dashboardState?.isLoading == true
+                      ? '...'
+                      : (dashboardState?.countUpcoming ?? 0).toString(),
                   subtitle: 'Rendez-vous confirmés',
                   icon: Icons.event_available_outlined,
-                  iconColor: Color(0xFF4C6FFF),
-                  badgeColor: Color(0xFFE4ECFF),
+                  iconColor: const Color(0xFF4C6FFF),
+                  badgeColor: const Color(0xFFE4ECFF),
                 ),
               ),
-              SizedBox(width: 12),
+              const SizedBox(width: 12),
               Expanded(
                 child: _DashboardStatCard(
                   label: 'Complétés',
-                  value: '1',
+                  value: dashboardState?.isLoading == true
+                      ? '...'
+                      : (dashboardState?.countCompleted ?? 0).toString(),
                   subtitle: 'Consultations terminées',
                   icon: Icons.check_circle_outline,
-                  iconColor: Color(0xFF1CBF72),
-                  badgeColor: Color(0xFFE3F7ED),
+                  iconColor: const Color(0xFF1CBF72),
+                  badgeColor: const Color(0xFFE3F7ED),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
           Row(
-            children: const [
+            children: [
               Expanded(
                 child: _DashboardStatCard(
                   label: 'Annulés',
-                  value: '1',
+                  value: dashboardState?.isLoading == true
+                      ? '...'
+                      : (dashboardState?.countCancelled ?? 0).toString(),
                   subtitle: 'Rendez-vous annulés',
                   icon: Icons.cancel_outlined,
-                  iconColor: Color(0xFFF16063),
-                  badgeColor: Color(0xFFFDE4E5),
+                  iconColor: const Color(0xFFF16063),
+                  badgeColor: const Color(0xFFFDE4E5),
                 ),
               ),
-              SizedBox(width: 12),
+              const SizedBox(width: 12),
               Expanded(
                 child: _DashboardStatCard(
                   label: 'Total',
-                  value: '3',
+                  value: dashboardState?.isLoading == true
+                      ? '...'
+                      : (dashboardState?.countTotal ?? 0).toString(),
                   subtitle: 'Tous les rendez-vous',
                   icon: Icons.insert_chart_outlined_rounded,
-                  iconColor: Color(0xFF8B5CF6),
-                  badgeColor: Color(0xFFEDE9FE),
+                  iconColor: const Color(0xFF8B5CF6),
+                  badgeColor: const Color(0xFFEDE9FE),
                 ),
               ),
             ],
@@ -286,16 +417,24 @@ class _DashboardHomeTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          const _DashboardActionCard(
+          _DashboardActionCard(
             icon: Icons.add_circle_outline,
             title: 'Nouveau rendez-vous',
             subtitle: 'Réserver une consultation',
+            onTap: () {
+              // Naviguer vers l'onglet "Nouveau RDV" (index 1)
+              widget.onNavigateToTab(1);
+            },
           ),
           const SizedBox(height: 12),
-          const _DashboardActionCard(
+          _DashboardActionCard(
             icon: Icons.event_note_outlined,
             title: 'Mes rendez-vous',
-            subtitle: 'Voir l’historique complet',
+            subtitle: 'Voir l\'historique complet',
+            onTap: () {
+              // Naviguer vers l'onglet "Mes RDV" (index 2)
+              widget.onNavigateToTab(2);
+            },
           ),
 
           const SizedBox(height: 24),
@@ -309,85 +448,139 @@ class _DashboardHomeTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                const CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Color(0xFFE4ECFF),
-                  child: Text(
-                    'SM',
-                    style: TextStyle(
-                      color: primaryBlue,
-                      fontWeight: FontWeight.w600,
-                    ),
+          if (dashboardState?.isLoading == true)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32.0),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (dashboardState?.upcomingAppointments.isEmpty ?? true)
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: const Center(
+                child: Text(
+                  'Aucun rendez-vous à venir',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text(
-                        'Dr. Sophie Martin',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+              ),
+            )
+          else
+            ...dashboardState!.upcomingAppointments.take(3).map((rdv) {
+              final medecin = rdv.medecin;
+              final medecinName = medecin != null
+                  ? 'Dr. ${medecin.firstName} ${medecin.lastName}'
+                  : 'Médecin';
+              final specialite = medecin?.speciality ?? '';
+              final initials = medecinName.length >= 2
+                  ? medecinName.substring(3, 5).toUpperCase()
+                  : 'M';
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 22,
+                        backgroundColor: const Color(0xFFE4ECFF),
+                        backgroundImage: medecin?.photoProfil != null
+                            ? NetworkImage(medecin!.photoProfil!)
+                            : null,
+                        child: medecin?.photoProfil == null
+                            ? Text(
+                                initials,
+                                style: const TextStyle(
+                                  color: primaryBlue,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              medecinName,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (specialite.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                specialite,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 6),
+                            Text(
+                              '${_formatDate(rdv.dateTime)} • ${_formatTime(rdv.dateTime)}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Médecin Généraliste',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
                         ),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        '05/12/2025 • 09:00',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.black87,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE4ECFF),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _getDaysUntil(rdv.dateTime),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: primaryBlue,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE4ECFF),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Text(
-                    'Dans 9 jours',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: primaryBlue,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+              );
+            }),
         ],
+        ),
       ),
     );
   }
@@ -475,68 +668,74 @@ class _DashboardActionCard extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.onTap,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFE4ECFF),
-              borderRadius: BorderRadius.circular(14),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
             ),
-            child: Icon(
-              icon,
-              color: const Color(0xFF1D5BFF),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE4ECFF),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                icon,
+                color: const Color(0xFF1D5BFF),
+              ),
             ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey,
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: Colors.grey,
-          ),
-        ],
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Colors.grey,
+            ),
+          ],
+        ),
       ),
     );
   }

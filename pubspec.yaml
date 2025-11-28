@@ -9,12 +9,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   # Routing
   go_router: ^14.0.0
 
   # State management
   flutter_riverpod: ^2.5.0
+  supabase_flutter: ^2.5.3
 
 dev_dependencies:
   flutter_test:

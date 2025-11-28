@@ -1,4 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+
+import '../application/doctor_dashboard_controller.dart';
+import '../application/doctor_appointments_controller.dart';
+import '../application/doctor_schedule_controller.dart';
+import '../application/doctor_unavailability_controller.dart';
+import '../application/doctor_reminder_settings_controller.dart';
+import '../../core/domain/rendez_vous.dart';
+import '../../core/services/doctor_schedule_service.dart';
+import '../../core/services/doctor_unavailability_service.dart';
+import '../../core/services/doctor_appointment_service.dart';
+import 'doctor_profile_screen.dart';
 
 class DoctorDashboardScreen extends StatefulWidget {
   const DoctorDashboardScreen({super.key});
@@ -35,6 +49,15 @@ class _DoctorDashboardScreenState extends State<DoctorDashboardScreen> {
           'Espace médecin',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person_outline),
+            onPressed: () {
+              context.push(DoctorProfileScreen.routePath);
+            },
+            tooltip: 'Mon profil',
+          ),
+        ],
       ),
       body: tabs[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
@@ -68,8 +91,35 @@ class _DoctorDashboardScreenState extends State<DoctorDashboardScreen> {
   }
 }
 
-class _DoctorAgendaTab extends StatelessWidget {
+class _DoctorAgendaTab extends ConsumerStatefulWidget {
   const _DoctorAgendaTab();
+
+  @override
+  ConsumerState<_DoctorAgendaTab> createState() => _DoctorAgendaTabState();
+}
+
+class _DoctorAgendaTabState extends ConsumerState<_DoctorAgendaTab> {
+  DateTime _selectedDate = DateTime.now();
+  bool _isWeekView = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Charger les données au montage
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final controller = ref.read(doctorDashboardControllerProvider.notifier);
+      controller.loadCurrentDoctor();
+    });
+  }
+
+  Future<void> _loadAppointmentsForDate(DateTime date) async {
+    final state = ref.read(doctorDashboardControllerProvider);
+    if (state.doctor != null) {
+      final controller = ref.read(doctorDashboardControllerProvider.notifier);
+      // Recharger toutes les données pour avoir les rendez-vous à jour
+      await controller.refresh(state.doctor!.id);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,225 +127,351 @@ class _DoctorAgendaTab extends StatelessWidget {
     const secondaryPurple = Color(0xFF7C3AED);
     const backgroundColor = Color(0xFFF5F7FF);
 
+    final state = ref.watch(doctorDashboardControllerProvider);
+    final controller = ref.read(doctorDashboardControllerProvider.notifier);
+
+    if (state.isLoading && state.doctor == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final doctor = state.doctor;
+    final doctorName = doctor != null
+        ? 'Dr. ${doctor.firstName} ${doctor.lastName}'
+        : 'Dr. ...';
+
+    // Filtrer les rendez-vous pour la date sélectionnée
+    final selectedDateAppointments = state.allAppointments.where((rdv) {
+      final rdvDate = DateTime(rdv.dateTime.year, rdv.dateTime.month, rdv.dateTime.day);
+      final selectedDateOnly = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+      return rdvDate.isAtSameMomentAs(selectedDateOnly);
+    }).toList();
+
+    // Vérifier si la date sélectionnée est aujourd'hui
+    final today = DateTime.now();
+    final isToday = _selectedDate.year == today.year &&
+        _selectedDate.month == today.month &&
+        _selectedDate.day == today.day;
+
     return Container(
       color: backgroundColor,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Bandeau violet avec stats
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  primaryPurple,
-                  secondaryPurple,
+      child: RefreshIndicator(
+        onRefresh: () async {
+          if (doctor != null) {
+            await controller.refresh(doctor.id);
+          }
+        },
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Bandeau violet avec stats
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    primaryPurple,
+                    secondaryPurple,
+                  ],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.10),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
+                  ),
                 ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.10),
-                  blurRadius: 18,
-                  offset: const Offset(0, 10),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Bonjour Dr. Sophie Martin 👨‍⚕️',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Bienvenue sur votre espace médecin',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: const [
-                    Expanded(
-                      child: _AgendaStatCard(
-                        label: "Aujourd'hui",
-                        value: '0',
-                        subtitle: 'rendez-vous',
-                      ),
-                    ),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: _AgendaStatCard(
-                        label: 'À venir',
-                        value: '2',
-                        subtitle: 'confirmés',
-                      ),
-                    ),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: _AgendaStatCard(
-                        label: 'Complétés',
-                        value: '0',
-                        subtitle: "aujourd'hui",
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          // Ligne date + filtres jour / semaine
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(999),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: const [
-                    Icon(
-                      Icons.chevron_left_rounded,
-                      size: 18,
-                      color: Colors.grey,
-                    ),
-                    SizedBox(width: 4),
-                    Text(
-                      'Mercredi 26 Novembre 2025',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                    SizedBox(width: 4),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 18,
-                      color: Colors.grey,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Text(
-                  'Aujourd’hui',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1D5BFF),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Text(
-                  'Jour',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Text(
-                  'Semaine',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // Planning de la journée
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.03),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Column(
-              children: const [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Planning de la journée',
-                    style: TextStyle(
-                      fontSize: 13,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Bonjour $doctorName 👨‍⚕️',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-                SizedBox(height: 40),
-                Icon(
-                  Icons.event_busy_outlined,
-                  size: 40,
-                  color: Colors.grey,
-                ),
-                SizedBox(height: 12),
-                Text(
-                  'Aucun rendez-vous',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Bienvenue sur votre espace médecin',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _AgendaStatCard(
+                          label: isToday ? "Aujourd'hui" : DateFormat('d MMM', 'fr_FR').format(_selectedDate),
+                          value: selectedDateAppointments.length.toString(),
+                          subtitle: 'rendez-vous',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _AgendaStatCard(
+                          label: 'À venir',
+                          value: state.upcomingConfirmedCount.toString(),
+                          subtitle: 'confirmés',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _AgendaStatCard(
+                          label: 'Complétés',
+                          value: state.todayCompletedCount.toString(),
+                          subtitle: "aujourd'hui",
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Ligne date + filtres jour / semaine
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.03),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(
+                          Icons.chevron_left_rounded,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _selectedDate = _selectedDate.subtract(const Duration(days: 1));
+                          });
+                          _loadAppointmentsForDate(_selectedDate);
+                        },
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: () async {
+                          final pickedDate = await showDatePicker(
+                            context: context,
+                            initialDate: _selectedDate,
+                            firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                            lastDate: DateTime.now().add(const Duration(days: 365)),
+                            locale: const Locale('fr', 'FR'),
+                          );
+                          if (pickedDate != null) {
+                            setState(() {
+                              _selectedDate = pickedDate;
+                            });
+                            _loadAppointmentsForDate(_selectedDate);
+                          }
+                        },
+                        child: Text(
+                          DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(_selectedDate),
+                        style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _selectedDate = _selectedDate.add(const Duration(days: 1));
+                          });
+                          _loadAppointmentsForDate(_selectedDate);
+                        },
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
                   ),
                 ),
-                SizedBox(height: 4),
-                Text(
-                  'Vous n’avez pas de rendez-vous pour cette journée',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey,
+                const SizedBox(width: 8),
+                if (isToday)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                      "Aujourd'hui",
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  )
+                else
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedDate = DateTime.now();
+                      });
+                      _loadAppointmentsForDate(_selectedDate);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[200],
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        "Aujourd'hui",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _isWeekView = false;
+                    });
+                  },
+                  child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: _isWeekView ? Colors.white : const Color(0xFF1D5BFF),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                    child: Text(
+                    'Jour',
+                    style: TextStyle(
+                      fontSize: 12,
+                        color: _isWeekView ? Colors.black87 : Colors.white,
+                      fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
                 ),
-                SizedBox(height: 12),
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _isWeekView = true;
+                    });
+                    // TODO: Charger les rendez-vous de la semaine
+                  },
+                  child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: _isWeekView ? const Color(0xFF1D5BFF) : Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                    child: Text(
+                    'Semaine',
+                    style: TextStyle(
+                      fontSize: 12,
+                        color: _isWeekView ? Colors.white : Colors.black87,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
-          ),
+
+            const SizedBox(height: 16),
+
+            // Planning de la journée
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.03),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: selectedDateAppointments.isEmpty
+                  ? Column(
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _isWeekView ? 'Planning de la semaine' : 'Planning de la journée',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 40),
+                        const Icon(
+                          Icons.event_busy_outlined,
+                          size: 40,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Aucun rendez-vous',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Vous n\'avez pas de rendez-vous ${isToday ? "aujourd'hui" : "pour cette journée"}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _isWeekView ? 'Planning de la semaine' : 'Planning de la journée',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ...selectedDateAppointments.map((rdv) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _AppointmentTimeSlot(rdv: rdv),
+                            )),
+                      ],
+                    ),
+            ),
 
           const SizedBox(height: 16),
 
@@ -328,25 +504,25 @@ class _DoctorAgendaTab extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      const _StatusLine(
-                        color: Color(0xFF22C55E),
+                      _StatusLine(
+                        color: const Color(0xFF22C55E),
                         label: 'Confirmés',
-                        value: '2',
+                        value: state.getCountByStatus(RendezVousStatus.confirme).toString(),
                       ),
-                      const _StatusLine(
-                        color: Color(0xFF3B82F6),
+                      _StatusLine(
+                        color: const Color(0xFF3B82F6),
                         label: 'Terminés',
-                        value: '1',
+                        value: state.getCountByStatus(RendezVousStatus.termine).toString(),
                       ),
-                      const _StatusLine(
-                        color: Color(0xFFEAB308),
+                      _StatusLine(
+                        color: const Color(0xFFEAB308),
                         label: 'En attente',
-                        value: '0',
+                        value: state.getCountByStatus(RendezVousStatus.enAttente).toString(),
                       ),
-                      const _StatusLine(
-                        color: Color(0xFFEF4444),
+                      _StatusLine(
+                        color: const Color(0xFFEF4444),
                         label: 'Annulés',
-                        value: '0',
+                        value: state.getCountByStatus(RendezVousStatus.annule).toString(),
                       ),
                     ],
                   ),
@@ -371,24 +547,36 @@ class _DoctorAgendaTab extends StatelessWidget {
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text(
+                    children: [
+                      const Text(
                         'Prochains rendez-vous',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      SizedBox(height: 12),
-                      _UpcomingAppointmentItem(
-                        patientName: 'Marie Dubois',
-                        dateLabel: '28/11/2025 à 10:00',
+                      const SizedBox(height: 12),
+                      if (state.upcomingAppointments.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Text(
+                            'Aucun rendez-vous à venir',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
                       ),
-                      SizedBox(height: 8),
-                      _UpcomingAppointmentItem(
-                        patientName: 'Jean Dupont',
-                        dateLabel: '05/12/2025 à 09:00',
+                          ),
+                        )
+                      else
+                        ...state.upcomingAppointments.take(2).map((rdv) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _UpcomingAppointmentItem(
+                                patientName: rdv.patient != null
+                                    ? '${rdv.patient!.firstName} ${rdv.patient!.lastName}'
+                                    : 'Patient',
+                                dateLabel: DateFormat('dd/MM/yyyy à HH:mm', 'fr_FR').format(rdv.dateTime),
                       ),
+                            )),
                     ],
                   ),
                 ),
@@ -396,13 +584,59 @@ class _DoctorAgendaTab extends StatelessWidget {
             ],
           ),
         ],
+        ),
       ),
     );
   }
 }
 
-class _DoctorAvailabilityTab extends StatelessWidget {
+class _DoctorAvailabilityTab extends ConsumerStatefulWidget {
   const _DoctorAvailabilityTab();
+
+  @override
+  ConsumerState<_DoctorAvailabilityTab> createState() => _DoctorAvailabilityTabState();
+}
+
+class _DoctorAvailabilityTabState extends ConsumerState<_DoctorAvailabilityTab> {
+  int _selectedTab = 0; // 0: Horaires, 1: Pauses, 2: Congés
+  
+  // Mapping des noms de jours français vers les noms de la DB
+  static const Map<String, String> _dayNameMapping = {
+    'Lundi': 'lundi',
+    'Mardi': 'mardi',
+    'Mercredi': 'mercredi',
+    'Jeudi': 'jeudi',
+    'Vendredi': 'vendredi',
+    'Samedi': 'samedi',
+    'Dimanche': 'dimanche',
+  };
+  
+  static const List<String> _daysOfWeek = [
+    'Lundi',
+    'Mardi',
+    'Mercredi',
+    'Jeudi',
+    'Vendredi',
+    'Samedi',
+    'Dimanche',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Charger les horaires au montage
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSchedules();
+    });
+  }
+
+  Future<void> _loadSchedules() async {
+    final dashboardState = ref.read(doctorDashboardControllerProvider);
+    if (dashboardState.doctor != null) {
+      final controller = ref.read(doctorScheduleControllerProvider.notifier);
+      await controller.load(dashboardState.doctor!.id);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -410,192 +644,197 @@ class _DoctorAvailabilityTab extends StatelessWidget {
     const secondaryPurple = Color(0xFF7C3AED);
     const backgroundColor = Color(0xFFF5F7FF);
 
-    final enabledDays = <String, bool>{
-      'Lundi': true,
-      'Mardi': true,
-      'Mercredi': true,
-      'Jeudi': true,
-      'Vendredi': true,
-      'Samedi': false,
-      'Dimanche': false,
-    };
+    final scheduleState = ref.watch(doctorScheduleControllerProvider);
+    final dashboardState = ref.watch(doctorDashboardControllerProvider);
 
     return Container(
       color: backgroundColor,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // En-tête gestion disponibilités
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  primaryPurple,
-                  secondaryPurple,
+      child: RefreshIndicator(
+        onRefresh: _loadSchedules,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // En-tête gestion disponibilités
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    primaryPurple,
+                    secondaryPurple,
+                  ],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.10),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
+                  ),
                 ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.10),
-                  blurRadius: 18,
-                  offset: const Offset(0, 10),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Gestion de mes disponibilités',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Gestion de mes disponibilités',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Configurez votre agenda, vos pauses et vos congés',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Configurez votre agenda, vos pauses et vos congés',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    children: [
-                      _AvailabilityTabChip(
-                        label: 'Horaires',
-                        isSelected: true,
-                      ),
-                      _AvailabilityTabChip(
-                        label: 'Pauses',
-                        isSelected: false,
-                        badgeColor: Colors.orangeAccent,
-                      ),
-                      _AvailabilityTabChip(
-                        label: 'Congés',
-                        isSelected: false,
-                        badgeColor: Colors.redAccent,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Bouton enregistrer
-          SizedBox(
-            height: 42,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1D5BFF),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              onPressed: () {
-                // TODO: sauvegarder les disponibilités
-              },
-              child: const Text(
-                'Enregistrer toutes les modifications',
-                style: TextStyle(fontSize: 13),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Jours de la semaine
-          ...enabledDays.entries.map(
-            (entry) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _AvailabilityDayCard(
-                dayLabel: entry.key,
-                enabled: entry.value,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // Bloc informations importantes
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFFBEB),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: const Color(0xFFFCD34D),
-              ),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Padding(
-                  padding: EdgeInsets.only(top: 2),
-                  child: Icon(
-                    Icons.info_outline,
-                    color: Color(0xFF92400E),
-                    size: 18,
-                  ),
-                ),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Informations importantes',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF92400E),
+                  const SizedBox(height: 16),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () => setState(() => _selectedTab = 0),
+                          child: _AvailabilityTabChip(
+                            label: 'Horaires',
+                            isSelected: _selectedTab == 0,
+                          ),
                         ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Les horaires définis seront visibles par tous les patients. '
-                        'Les pauses bloquent automatiquement les créneaux concernés. '
-                        'Les congés désactivent toute prise de rendez-vous sur les périodes choisies.',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF92400E),
+                        GestureDetector(
+                          onTap: () => setState(() => _selectedTab = 1),
+                          child: _AvailabilityTabChip(
+                            label: 'Pauses',
+                            isSelected: _selectedTab == 1,
+                            badgeColor: Colors.orangeAccent,
+                          ),
                         ),
-                      ),
-                    ],
+                        GestureDetector(
+                          onTap: () => setState(() => _selectedTab = 2),
+                          child: _AvailabilityTabChip(
+                            label: 'Congés',
+                            isSelected: _selectedTab == 2,
+                            badgeColor: Colors.redAccent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            if (_selectedTab == 0) ...[
+              // Jours de la semaine pour les horaires
+              if (scheduleState.isLoading)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(32.0),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else
+                ..._daysOfWeek.map(
+                  (dayLabel) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _AvailabilityDayCard(
+                      dayLabel: dayLabel,
+                      dayKey: _dayNameMapping[dayLabel]!,
+                      medecinId: dashboardState.doctor?.id ?? '',
+                      schedules: scheduleState.schedulesByDay[_dayNameMapping[dayLabel]] ?? [],
+                      onScheduleChanged: () {
+                        // Recharger les horaires après modification
+                        _loadSchedules();
+                      },
+                    ),
                   ),
                 ),
-              ],
+            ] else if (_selectedTab == 1) ...[
+              // Onglet Pauses
+              _PausesTab(medecinId: dashboardState.doctor?.id ?? ''),
+            ] else if (_selectedTab == 2) ...[
+              // Onglet Congés
+              _CongesTab(medecinId: dashboardState.doctor?.id ?? ''),
+            ],
+
+            const SizedBox(height: 12),
+
+            // Bloc informations importantes
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFBEB),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: const Color(0xFFFCD34D),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(
+                      Icons.info_outline,
+                      color: Color(0xFF92400E),
+                      size: 18,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Informations importantes',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF92400E),
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Les horaires définis seront visibles par tous les patients. '
+                          'Les pauses bloquent automatiquement les créneaux concernés. '
+                          'Les congés désactivent toute prise de rendez-vous sur les périodes choisies.',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF92400E),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+
 }
 
-class _DoctorAppointmentsTab extends StatefulWidget {
+class _DoctorAppointmentsTab extends ConsumerStatefulWidget {
   const _DoctorAppointmentsTab();
 
   @override
-  State<_DoctorAppointmentsTab> createState() => _DoctorAppointmentsTabState();
+  ConsumerState<_DoctorAppointmentsTab> createState() => _DoctorAppointmentsTabState();
 }
 
-class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
+class _DoctorAppointmentsTabState extends ConsumerState<_DoctorAppointmentsTab> {
   int _selectedStatusIndex = 0;
 
   final List<String> _statuses = const [
@@ -605,16 +844,29 @@ class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
     'Annulés',
   ];
 
-  String get _statusSubtitle {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final dashboardState = ref.read(doctorDashboardControllerProvider);
+      if (dashboardState.doctor != null) {
+        final controller = ref.read(doctorAppointmentsControllerProvider.notifier);
+        controller.load(dashboardState.doctor!.id);
+      }
+    });
+  }
+
+  String _getStatusSubtitle(DoctorAppointmentsState state) {
+    final count = state.filteredAppointments.length;
     switch (_selectedStatusIndex) {
       case 1:
-        return '2 rendez-vous confirmés';
+        return '$count rendez-vous confirmés';
       case 2:
-        return '1 rendez-vous terminé';
+        return '$count rendez-vous terminés';
       case 3:
-        return '0 rendez-vous annulés';
+        return '$count rendez-vous annulés';
       default:
-        return '3 rendez-vous trouvés';
+        return '$count rendez-vous trouvés';
     }
   }
 
@@ -623,8 +875,18 @@ class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
     const backgroundColor = Color(0xFFF5F7FF);
     const primaryBlue = Color(0xFF1D5BFF);
 
+    final appointmentsState = ref.watch(doctorAppointmentsControllerProvider);
+    final dashboardState = ref.watch(doctorDashboardControllerProvider);
+
     return Container(
       color: backgroundColor,
+      child: RefreshIndicator(
+        onRefresh: () async {
+          if (dashboardState.doctor != null) {
+            final controller = ref.read(doctorAppointmentsControllerProvider.notifier);
+            await controller.refresh(dashboardState.doctor!.id);
+          }
+        },
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -643,7 +905,7 @@ class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    _statusSubtitle,
+                      _getStatusSubtitle(appointmentsState),
                     style: const TextStyle(
                       fontSize: 12,
                       color: Colors.grey,
@@ -663,7 +925,7 @@ class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
                     ),
                   ),
                   onPressed: () {
-                    // TODO: démarrer la création d’un nouveau rendez-vous
+                      // TODO: démarrer la création d'un nouveau rendez-vous
                   },
                   icon: const Icon(Icons.add, size: 16),
                   label: const Text(
@@ -726,16 +988,16 @@ class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
                       final String count;
                       switch (index) {
                         case 1:
-                          count = '2';
+                          count = appointmentsState.getCountByStatus(RendezVousStatus.confirme).toString();
                           break;
                         case 2:
-                          count = '1';
+                          count = appointmentsState.getCountByStatus(RendezVousStatus.termine).toString();
                           break;
                         case 3:
-                          count = '0';
+                          count = appointmentsState.getCountByStatus(RendezVousStatus.annule).toString();
                           break;
                         default:
-                          count = '3';
+                          count = appointmentsState.appointments.length.toString();
                       }
 
                       return Padding(
@@ -747,6 +1009,22 @@ class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
                             setState(() {
                               _selectedStatusIndex = index;
                             });
+                            final controller = ref.read(doctorAppointmentsControllerProvider.notifier);
+                            RendezVousStatus? status;
+                            switch (index) {
+                              case 1:
+                                status = RendezVousStatus.confirme;
+                                break;
+                              case 2:
+                                status = RendezVousStatus.termine;
+                                break;
+                              case 3:
+                                status = RendezVousStatus.annule;
+                                break;
+                              default:
+                                status = null;
+                            }
+                            controller.filterByStatus(status);
                           },
                           child: Container(
                             padding: const EdgeInsets.symmetric(
@@ -777,52 +1055,108 @@ class _DoctorAppointmentsTabState extends State<_DoctorAppointmentsTab> {
 
           const SizedBox(height: 16),
 
-          const _DoctorAppointmentCard(
-            doctorName: 'Dr. Sophie Martin',
-            specialty: 'Médecin Généraliste',
-            dateLabel: 'Vendredi 05 Décembre 2025',
-            timeLabel: '09:00',
-            patientName: 'Jean Dupont',
-            phone: '06 23 45 67 89',
-            statusLabel: 'Confirmé',
-            statusColor: Color(0xFF16A34A),
-            motif: 'Suivi médical annuel',
-            notes: 'Apporter les résultats sanguins',
+          if (appointmentsState.isLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32.0),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (appointmentsState.filteredAppointments.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  children: const [
+                    Icon(
+                      Icons.event_busy_outlined,
+                      size: 48,
+                      color: Colors.grey,
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Aucun rendez-vous',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey,
           ),
-          const SizedBox(height: 12),
-          const _DoctorAppointmentCard(
-            doctorName: 'Dr. Sophie Martin',
-            specialty: 'Médecin Généraliste',
-            dateLabel: 'Vendredi 28 Novembre 2025',
-            timeLabel: '10:00',
-            patientName: 'Marie Dubois',
-            phone: '06 12 34 56 78',
-            statusLabel: 'Confirmé',
-            statusColor: Color(0xFF16A34A),
-            motif: 'Consultation générale - Douleurs abdominales',
-            notes: 'Première consultation',
-          ),
-          const SizedBox(height: 12),
-          const _DoctorAppointmentCard(
-            doctorName: 'Dr. Marie Lefebvre',
-            specialty: 'Dermatologue',
-            dateLabel: 'Samedi 15 Novembre 2025',
-            timeLabel: '14:30',
-            patientName: 'Marie Dubois',
-            phone: '06 12 34 56 78',
-            statusLabel: 'Terminé',
-            statusColor: Color(0xFF3B82F6),
-            motif: 'Contrôle annuel peau',
-            notes: '',
-          ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'Vous n\'avez pas de rendez-vous pour ce filtre',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ...appointmentsState.filteredAppointments.map((rdv) {
+              final patientName = rdv.patient != null
+                  ? '${rdv.patient!.firstName} ${rdv.patient!.lastName}'
+                  : 'Patient';
+              final phone = rdv.patient?.phoneNumber ?? 'Non renseigné';
+              final dateLabel = DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(rdv.dateTime);
+              final timeLabel = DateFormat('HH:mm', 'fr_FR').format(rdv.dateTime);
+              
+              Color statusColor;
+              String statusLabel;
+              switch (rdv.status) {
+                case RendezVousStatus.confirme:
+                  statusColor = const Color(0xFF16A34A);
+                  statusLabel = 'Confirmé';
+                  break;
+                case RendezVousStatus.termine:
+                  statusColor = const Color(0xFF3B82F6);
+                  statusLabel = 'Terminé';
+                  break;
+                case RendezVousStatus.enAttente:
+                  statusColor = const Color(0xFFEAB308);
+                  statusLabel = 'En attente';
+                  break;
+                case RendezVousStatus.annule:
+                  statusColor = const Color(0xFFEF4444);
+                  statusLabel = 'Annulé';
+                  break;
+                case RendezVousStatus.absent:
+                  statusColor = const Color(0xFF6B7280);
+                  statusLabel = 'Absent';
+                  break;
+              }
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _DoctorAppointmentCard(
+                  appointment: rdv,
+                  doctorName: dashboardState.doctor != null
+                      ? 'Dr. ${dashboardState.doctor!.firstName} ${dashboardState.doctor!.lastName}'
+                      : 'Dr.',
+                  specialty: dashboardState.doctor?.speciality ?? 'Médecin',
+                  dateLabel: dateLabel,
+                  timeLabel: timeLabel,
+                  patientName: patientName,
+                  phone: phone,
+                  statusLabel: statusLabel,
+                  statusColor: statusColor,
+                  motif: rdv.motifConsultation ?? 'Aucun motif',
+                  notes: rdv.notesPatient ?? '',
+                ),
+              );
+            }),
         ],
+        ),
       ),
     );
   }
 }
 
-class _DoctorAppointmentCard extends StatelessWidget {
+class _DoctorAppointmentCard extends ConsumerWidget {
   const _DoctorAppointmentCard({
+    required this.appointment,
     required this.doctorName,
     required this.specialty,
     required this.dateLabel,
@@ -835,6 +1169,7 @@ class _DoctorAppointmentCard extends StatelessWidget {
     required this.notes,
   });
 
+  final RendezVous appointment;
   final String doctorName;
   final String specialty;
   final String dateLabel;
@@ -846,9 +1181,70 @@ class _DoctorAppointmentCard extends StatelessWidget {
   final String motif;
   final String notes;
 
+  Future<void> _showEditAppointmentDialog(
+    BuildContext context,
+    WidgetRef ref,
+    RendezVous appointment,
+    String medecinId,
+  ) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _EditAppointmentDialog(appointment: appointment),
+    );
+
+    if (result != null) {
+      final appointmentsController = ref.read(doctorAppointmentsControllerProvider.notifier);
+      final appointmentService = ref.read(doctorAppointmentServiceProvider);
+
+      try {
+        // Mettre à jour la date/heure et la durée si modifiées
+        if (result.containsKey('dateTime') || result.containsKey('duree')) {
+          await appointmentService.updateAppointment(
+            appointmentId: appointment.id,
+            dateTime: result['dateTime'] as DateTime?,
+            duree: result['duree'] as int?,
+          );
+        }
+
+        // Mettre à jour les notes médecin si modifiées
+        if (result.containsKey('notesMedecin')) {
+          await appointmentService.updateAppointmentNotes(
+            appointment.id,
+            result['notesMedecin'] as String? ?? '',
+          );
+        }
+
+        // Rafraîchir la liste
+        if (medecinId.isNotEmpty) {
+          await appointmentsController.refresh(medecinId);
+        }
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Rendez-vous modifié avec succès'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erreur lors de la modification: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     const primaryBlue = Color(0xFF1D5BFF);
+    final appointmentsController = ref.read(doctorAppointmentsControllerProvider.notifier);
+    final dashboardState = ref.read(doctorDashboardControllerProvider);
 
     return Card(
       shape: RoundedRectangleBorder(
@@ -1044,17 +1440,35 @@ class _DoctorAppointmentCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                if (statusLabel != 'Terminé' && statusLabel != 'Annulé')
                 OutlinedButton.icon(
-                  onPressed: () {
-                    // TODO: modifier le rendez-vous
-                  },
-                  icon: const Icon(
-                    Icons.edit_outlined,
+                    onPressed: () async {
+                      if (statusLabel == 'En attente') {
+                        // Confirmer directement si en attente
+                        await appointmentsController.confirmAppointment(appointment.id);
+                        if (dashboardState.doctor != null) {
+                          await appointmentsController.refresh(dashboardState.doctor!.id);
+                        }
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Rendez-vous confirmé'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      } else {
+                        // Ouvrir le dialogue de modification
+                        await _showEditAppointmentDialog(context, ref, appointment, dashboardState.doctor?.id ?? '');
+                      }
+                    },
+                    icon: Icon(
+                      statusLabel == 'En attente' ? Icons.check_circle_outline : Icons.edit_outlined,
                     size: 14,
                   ),
-                  label: const Text(
-                    'Modifier',
-                    style: TextStyle(fontSize: 12),
+                    label: Text(
+                      statusLabel == 'En attente' ? 'Confirmer' : 'Modifier',
+                      style: const TextStyle(fontSize: 12),
                   ),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
@@ -1063,10 +1477,44 @@ class _DoctorAppointmentCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (statusLabel != 'Terminé' && statusLabel != 'Annulé') ...[
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
-                  onPressed: () {
-                    // TODO: annuler le rendez-vous
+                    onPressed: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Annuler le rendez-vous'),
+                          content: const Text('Êtes-vous sûr de vouloir annuler ce rendez-vous ?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: const Text('Non'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(true),
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.red,
+                              ),
+                              child: const Text('Oui, annuler'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true) {
+                        await appointmentsController.cancelAppointment(appointment.id);
+                        if (dashboardState.doctor != null) {
+                          await appointmentsController.refresh(dashboardState.doctor!.id);
+                        }
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Rendez-vous annulé'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                        }
+                      }
                   },
                   icon: const Icon(
                     Icons.close,
@@ -1088,6 +1536,44 @@ class _DoctorAppointmentCard extends StatelessWidget {
                   ),
                 ),
               ],
+                if (statusLabel == 'Confirmé') ...[
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      await appointmentsController.completeAppointment(appointment.id);
+                      if (dashboardState.doctor != null) {
+                        await appointmentsController.refresh(dashboardState.doctor!.id);
+                      }
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Rendez-vous marqué comme terminé'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(
+                      Icons.check_circle,
+                      size: 14,
+                    ),
+                    label: const Text(
+                      'Terminer',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF3B82F6),
+                      side: const BorderSide(
+                        color: Color(0xFF3B82F6),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
         ),
@@ -1096,8 +1582,24 @@ class _DoctorAppointmentCard extends StatelessWidget {
   }
 }
 
-class _DoctorStatsTab extends StatelessWidget {
+class _DoctorStatsTab extends ConsumerStatefulWidget {
   const _DoctorStatsTab();
+
+  @override
+  ConsumerState<_DoctorStatsTab> createState() => _DoctorStatsTabState();
+}
+
+class _DoctorStatsTabState extends ConsumerState<_DoctorStatsTab> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final dashboardState = ref.read(doctorDashboardControllerProvider);
+      if (dashboardState.doctor != null) {
+        // Les statistiques sont déjà chargées dans le dashboard controller
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1105,8 +1607,22 @@ class _DoctorStatsTab extends StatelessWidget {
     const primaryGreen = Color(0xFF16A34A);
     const secondaryGreen = Color(0xFF22C55E);
 
+    final dashboardState = ref.watch(doctorDashboardControllerProvider);
+    final statistics = dashboardState.statistics;
+
+    if (dashboardState.isLoading && statistics == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return Container(
       color: backgroundColor,
+      child: RefreshIndicator(
+        onRefresh: () async {
+          if (dashboardState.doctor != null) {
+            final controller = ref.read(doctorDashboardControllerProvider.notifier);
+            await controller.refresh(dashboardState.doctor!.id);
+          }
+        },
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -1131,9 +1647,9 @@ class _DoctorStatsTab extends StatelessWidget {
                 ),
               ],
             ),
-            child: Column(
+              child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
+                children: [
                 Text(
                   'Statistiques & Analytics',
                   style: TextStyle(
@@ -1143,8 +1659,8 @@ class _DoctorStatsTab extends StatelessWidget {
                   ),
                 ),
                 SizedBox(height: 4),
-                Text(
-                  'Vue d’ensemble de votre activité médicale',
+                  const Text(
+                    "Vue d'ensemble de votre activité médicale",
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 12,
@@ -1157,23 +1673,24 @@ class _DoctorStatsTab extends StatelessWidget {
           const SizedBox(height: 16),
 
           // Cartes KPI principales
+            if (statistics != null) ...[
           Row(
-            children: const [
+                children: [
               Expanded(
                 child: _StatKpiCard(
                   icon: Icons.event_note_outlined,
                   label: 'Total rendez-vous',
-                  value: '3',
+                      value: statistics.totalAppointments.toString(),
                   trendIcon: Icons.trending_up,
                 ),
               ),
-              SizedBox(width: 8),
+                  const SizedBox(width: 8),
               Expanded(
                 child: _StatKpiCard(
                   icon: Icons.check_circle_outline,
                   label: 'Consultations terminées',
-                  value: '1',
-                  suffix: '33 %',
+                      value: statistics.completedAppointments.toString(),
+                      suffix: '${statistics.completionRate.toStringAsFixed(0)} %',
                   trendIcon: Icons.trending_up,
                 ),
               ),
@@ -1181,21 +1698,21 @@ class _DoctorStatsTab extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Row(
-            children: const [
+                children: [
               Expanded(
                 child: _StatKpiCard(
                   icon: Icons.people_outline,
                   label: 'Patients uniques',
-                  value: '2',
+                      value: statistics.uniquePatients.toString(),
                   trendIcon: Icons.trending_up,
                 ),
               ),
-              SizedBox(width: 8),
+                  const SizedBox(width: 8),
               Expanded(
                 child: _StatKpiCard(
                   icon: Icons.attach_money_outlined,
                   label: 'Revenu estimé',
-                  value: r'$ 25',
+                      value: '${statistics.totalRevenue.toStringAsFixed(0)} €',
                   trendIcon: Icons.trending_up,
                 ),
               ),
@@ -1204,32 +1721,32 @@ class _DoctorStatsTab extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // Semaine / mois / taux d’annulation
+              // Semaine / mois / taux d'annulation
           Row(
-            children: const [
+                children: [
               Expanded(
                 child: _SmallMetricCard(
                   icon: Icons.calendar_today_outlined,
                   label: 'Cette semaine',
-                  value: '1',
+                      value: statistics.thisWeekAppointments.toString(),
                   subtitle: 'rendez-vous',
                 ),
               ),
-              SizedBox(width: 8),
+                  const SizedBox(width: 8),
               Expanded(
                 child: _SmallMetricCard(
                   icon: Icons.date_range_outlined,
                   label: 'Ce mois',
-                  value: '2',
+                      value: statistics.thisMonthAppointments.toString(),
                   subtitle: 'rendez-vous',
                 ),
               ),
-              SizedBox(width: 8),
+                  const SizedBox(width: 8),
               Expanded(
                 child: _SmallMetricCard(
                   icon: Icons.percent,
-                  label: 'Taux d’annulation',
-                  value: '0%',
+                      label: "Taux d'annulation",
+                      value: '${statistics.cancellationRate.toStringAsFixed(0)}%',
                   subtitle: 'annulés',
                   valueColor: Colors.redAccent,
                 ),
@@ -1243,30 +1760,38 @@ class _DoctorStatsTab extends StatelessWidget {
           _StatSectionCard(
             title: 'Répartition par statut',
             child: Column(
-              children: const [
+                  children: [
                 _ProgressStatLine(
                   label: 'Confirmés',
-                  value: '2',
-                  progress: 2 / 3,
-                  color: Color(0xFF22C55E),
+                      value: statistics.confirmedAppointments.toString(),
+                      progress: statistics.totalAppointments > 0
+                          ? statistics.confirmedAppointments / statistics.totalAppointments
+                          : 0,
+                      color: const Color(0xFF22C55E),
                 ),
                 _ProgressStatLine(
                   label: 'Terminés',
-                  value: '1',
-                  progress: 1 / 3,
-                  color: Color(0xFF3B82F6),
+                      value: statistics.completedAppointments.toString(),
+                      progress: statistics.totalAppointments > 0
+                          ? statistics.completedAppointments / statistics.totalAppointments
+                          : 0,
+                      color: const Color(0xFF3B82F6),
                 ),
                 _ProgressStatLine(
                   label: 'En attente',
-                  value: '0',
-                  progress: 0,
-                  color: Color(0xFFEAB308),
+                      value: (statistics.totalAppointments - statistics.confirmedAppointments - statistics.completedAppointments - statistics.cancelledAppointments).toString(),
+                      progress: statistics.totalAppointments > 0
+                          ? (statistics.totalAppointments - statistics.confirmedAppointments - statistics.completedAppointments - statistics.cancelledAppointments) / statistics.totalAppointments
+                          : 0,
+                      color: const Color(0xFFEAB308),
                 ),
                 _ProgressStatLine(
                   label: 'Annulés',
-                  value: '0',
-                  progress: 0,
-                  color: Color(0xFFEF4444),
+                      value: statistics.cancelledAppointments.toString(),
+                      progress: statistics.totalAppointments > 0
+                          ? statistics.cancelledAppointments / statistics.totalAppointments
+                          : 0,
+                      color: const Color(0xFFEF4444),
                 ),
               ],
             ),
@@ -1276,86 +1801,7 @@ class _DoctorStatsTab extends StatelessWidget {
 
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Expanded(
-                child: _StatSectionCard(
-                  title: 'Consultations par spécialité',
-                  child: Column(
                     children: [
-                      _ProgressStatLine(
-                        label: 'Médecin Généraliste',
-                        value: '2 consultations',
-                        progress: 2 / 3,
-                        color: Color(0xFF4C6FFF),
-                        small: true,
-                      ),
-                      _ProgressStatLine(
-                        label: 'Dermatologue',
-                        value: '1 consultation',
-                        progress: 1 / 3,
-                        color: Color(0xFFEC4899),
-                        small: true,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: _StatSectionCard(
-                  title: 'Distribution par jour',
-                  child: Column(
-                    children: [
-                      _ProgressStatLine(
-                        label: 'Vendredi',
-                        value: '2',
-                        progress: 2 / 3,
-                        color: Color(0xFF8B5CF6),
-                        small: true,
-                      ),
-                      _ProgressStatLine(
-                        label: 'Samedi',
-                        value: '1',
-                        progress: 1 / 3,
-                        color: Color(0xFFEC4899),
-                        small: true,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Expanded(
-                child: _StatSectionCard(
-                  title: 'Distribution horaire',
-                  child: Column(
-                    children: [
-                      _ProgressStatLine(
-                        label: 'Matin (8h–12h)',
-                        value: '2 consultations',
-                        progress: 2 / 3,
-                        color: Color(0xFFF97316),
-                        small: true,
-                      ),
-                      _ProgressStatLine(
-                        label: 'Après-midi (14h–18h)',
-                        value: '1 consultation',
-                        progress: 1 / 3,
-                        color: Color(0xFFFB923C),
-                        small: true,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(width: 8),
               Expanded(
                 child: _StatSectionCard(
                   title: 'Indicateurs de performance',
@@ -1364,23 +1810,16 @@ class _DoctorStatsTab extends StatelessWidget {
                     children: [
                       _KpiInlineLine(
                         label: 'Taux de complétion',
-                        value: '33 %',
+                            value: '${statistics.completionRate.toStringAsFixed(0)} %',
                         icon: Icons.check_circle_outline,
-                        color: Color(0xFF16A34A),
+                            color: const Color(0xFF16A34A),
                       ),
-                      SizedBox(height: 8),
-                      _KpiInlineLine(
-                        label: 'Patients fidèles',
-                        value: '67 %',
-                        icon: Icons.people_outline,
-                        color: Color(0xFF2563EB),
-                      ),
-                      SizedBox(height: 8),
+                          const SizedBox(height: 8),
                       _KpiInlineLine(
                         label: 'Revenu moyen/patient',
-                        value: '13 €',
+                            value: '${statistics.averageRevenuePerPatient.toStringAsFixed(0)} €',
                         icon: Icons.euro_outlined,
-                        color: Color(0xFFF97316),
+                            color: const Color(0xFFF97316),
                       ),
                     ],
                   ),
@@ -1388,7 +1827,22 @@ class _DoctorStatsTab extends StatelessWidget {
               ),
             ],
           ),
-        ],
+            ] else ...[
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32.0),
+                  child: Text(
+                    'Aucune statistique disponible',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1694,8 +2148,27 @@ class _KpiInlineLine extends StatelessWidget {
   }
 }
 
-class _DoctorAutoRemindersTab extends StatelessWidget {
+class _DoctorAutoRemindersTab extends ConsumerStatefulWidget {
   const _DoctorAutoRemindersTab();
+
+  @override
+  ConsumerState<_DoctorAutoRemindersTab> createState() => _DoctorAutoRemindersTabState();
+}
+
+class _DoctorAutoRemindersTabState extends ConsumerState<_DoctorAutoRemindersTab> {
+  double _reminderHoursSlider = 24.0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final dashboardState = ref.read(doctorDashboardControllerProvider);
+      if (dashboardState.doctor != null) {
+        ref.read(doctorReminderSettingsControllerProvider.notifier)
+            .loadSettings(dashboardState.doctor!.id);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1703,325 +2176,142 @@ class _DoctorAutoRemindersTab extends StatelessWidget {
     const primaryRed = Color(0xFFDC2626);
     const secondaryOrange = Color(0xFFF97316);
 
+    final reminderSettingsState = ref.watch(doctorReminderSettingsControllerProvider);
+    final dashboardState = ref.watch(doctorDashboardControllerProvider);
+    final settings = reminderSettingsState.settings;
+    final doctor = dashboardState.doctor;
+
+    // Calculer les statistiques de rappels
+    final confirmedAppointments = dashboardState.upcomingAppointments
+        .where((rdv) => rdv.status == RendezVousStatus.confirme)
+        .toList();
+    
+    final now = DateTime.now();
+    int remindersSent = 0;
+    int remindersPending = 0;
+    
+    for (final rdv in confirmedAppointments) {
+      if (settings != null && settings.enabled) {
+        final reminderTime = rdv.dateTime.subtract(Duration(hours: settings.reminderHoursBefore));
+        if (now.isAfter(reminderTime)) {
+          remindersSent++;
+        } else {
+          remindersPending++;
+        }
+      }
+    }
+
+    // Initialiser le slider avec les settings
+    if (settings != null && _reminderHoursSlider != settings.reminderHoursBefore.toDouble()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        setState(() {
+          _reminderHoursSlider = settings.reminderHoursBefore.toDouble();
+        });
+      });
+    }
+
     return Container(
       color: backgroundColor,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // En-tête rappels auto
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  primaryRed,
-                  secondaryOrange,
+      child: RefreshIndicator(
+        onRefresh: () async {
+          if (doctor != null) {
+            await ref.read(doctorReminderSettingsControllerProvider.notifier)
+                .loadSettings(doctor.id);
+            await ref.read(doctorDashboardControllerProvider.notifier)
+                .refresh(doctor.id);
+          }
+        },
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // En-tête rappels auto
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    primaryRed,
+                    secondaryOrange,
+                  ],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.10),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
+                  ),
                 ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.10),
-                  blurRadius: 18,
-                  offset: const Offset(0, 10),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text(
-                  'Gestion des Rappels Automatiques',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'Configurez les notifications automatiques envoyées à vos patients',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Paramètres des rappels
-          Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
+              child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Paramètres des rappels',
+                  Text(
+                    'Gestion des Rappels Automatiques',
                     style: TextStyle(
-                      fontSize: 13,
+                      color: Colors.white,
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 12),
-
-                  // Activer les rappels automatiques
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.notifications_active_outlined,
-                        size: 18,
-                        color: Color(0xFF1D5BFF),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text(
-                              'Activer les rappels automatiques',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Envoyer automatiquement des rappels aux patients avant leurs rendez-vous',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Switch(
-                        value: true,
-                        onChanged: null, // mock pour l’instant
-                        activeColor: const Color(0xFF22C55E),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  const Divider(height: 1),
-
-                  const SizedBox(height: 12),
-
-                  const Text(
-                    'Canaux de communication',
+                  SizedBox(height: 4),
+                  Text(
+                    'Configurez les notifications automatiques envoyées à vos patients',
                     style: TextStyle(
+                      color: Colors.white70,
                       fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-
-                  // SMS
-                  _ReminderChannelRow(
-                    icon: Icons.sms_outlined,
-                    label: 'Rappel par SMS',
-                    description: 'Envoyer un SMS au patient',
-                    active: true,
-                  ),
-                  const SizedBox(height: 6),
-                  // Email
-                  _ReminderChannelRow(
-                    icon: Icons.email_outlined,
-                    label: 'Rappel par Email',
-                    description: 'Envoyer un email au patient',
-                    active: true,
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  const Text(
-                    'Délai de rappel',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.schedule_outlined,
-                        size: 18,
-                        color: Colors.grey,
-                      ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'Envoyer le rappel',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF97316).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: const Text(
-                          '24h avant',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xFFF97316),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 4,
-                      thumbShape:
-                          const RoundSliderThumbShape(enabledThumbRadius: 8),
-                    ),
-                    child: Slider(
-                      value: 0.5,
-                      onChanged: null, // mock
-                      min: 0,
-                      max: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Les patients recevront un rappel 24 heures avant leur rendez-vous.',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.grey,
                     ),
                   ),
                 ],
               ),
             ),
-          ),
 
-          const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
-          SizedBox(
-            height: 44,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1D5BFF),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                ),
+            // Paramètres des rappels
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
-              onPressed: () {
-                // TODO: enregistrer les paramètres
-              },
-              icon: const Icon(Icons.save_outlined, size: 18),
-              label: const Text(
-                'Enregistrer les paramètres',
-                style: TextStyle(fontSize: 13),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Stat petits blocs
-          Row(
-            children: const [
-              Expanded(
-                child: _SmallMetricCard(
-                  icon: Icons.send_outlined,
-                  label: 'Rappels envoyés',
-                  value: '1',
-                  subtitle: 'Notifications déjà envoyées',
-                ),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: _SmallMetricCard(
-                  icon: Icons.schedule_send_outlined,
-                  label: 'En attente',
-                  value: '1',
-                  subtitle: 'À envoyer prochainement',
-                ),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: _SmallMetricCard(
-                  icon: Icons.check_circle_outline,
-                  label: 'Total à venir',
-                  value: '2',
-                  subtitle: 'Rendez-vous confirmés',
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // Prochains rappels programmés
-          Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Prochains rappels programmés',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Paramètres des rappels',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFFBEB),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
+                    const SizedBox(height: 12),
+
+                    // Activer les rappels automatiques
+                    Row(
                       children: [
                         const Icon(
                           Icons.notifications_active_outlined,
                           size: 18,
-                          color: Color(0xFFF59E0B),
+                          color: Color(0xFF1D5BFF),
                         ),
                         const SizedBox(width: 8),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
+                            children: const [
                               Text(
-                                'Jean Dupont',
+                                'Activer les rappels automatiques',
                                 style: TextStyle(
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                               SizedBox(height: 2),
                               Text(
-                                'Vendredi 5 Décembre à 09:00',
+                                'Envoyer automatiquement des rappels aux patients avant leurs rendez-vous',
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: Colors.grey,
@@ -2030,33 +2320,345 @@ class _DoctorAutoRemindersTab extends StatelessWidget {
                             ],
                           ),
                         ),
-                        IconButton(
-                          onPressed: () {
-                            // TODO: voir le détail
-                          },
-                          icon: const Icon(
-                            Icons.visibility_outlined,
-                            size: 18,
-                            color: Color(0xFF1D5BFF),
+                        Switch(
+                          value: settings?.enabled ?? true,
+                          onChanged: doctor != null
+                              ? (value) async {
+                                  await ref
+                                      .read(doctorReminderSettingsControllerProvider.notifier)
+                                      .updateProperty(
+                                        medecinId: doctor.id,
+                                        enabled: value,
+                                      );
+                                }
+                              : null,
+                          activeColor: const Color(0xFF22C55E),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    const Divider(height: 1),
+
+                    const SizedBox(height: 12),
+
+                    const Text(
+                      'Canaux de communication',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    // SMS
+                    _ReminderChannelRow(
+                      icon: Icons.sms_outlined,
+                      label: 'Rappel par SMS',
+                      description: 'Envoyer un SMS au patient',
+                      active: settings?.smsEnabled ?? true,
+                      onChanged: doctor != null
+                          ? (value) async {
+                              await ref
+                                  .read(doctorReminderSettingsControllerProvider.notifier)
+                                  .updateProperty(
+                                    medecinId: doctor.id,
+                                    smsEnabled: value,
+                                  );
+                            }
+                          : null,
+                    ),
+                    const SizedBox(height: 6),
+                    // Email
+                    _ReminderChannelRow(
+                      icon: Icons.email_outlined,
+                      label: 'Rappel par Email',
+                      description: 'Envoyer un email au patient',
+                      active: settings?.emailEnabled ?? true,
+                      onChanged: doctor != null
+                          ? (value) async {
+                              await ref
+                                  .read(doctorReminderSettingsControllerProvider.notifier)
+                                  .updateProperty(
+                                    medecinId: doctor.id,
+                                    emailEnabled: value,
+                                  );
+                            }
+                          : null,
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    const Text(
+                      'Délai de rappel',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.schedule_outlined,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Envoyer le rappel',
+                            style: TextStyle(fontSize: 12),
                           ),
                         ),
-                        IconButton(
-                          onPressed: () {
-                            // TODO: annuler le rappel
-                          },
-                          icon: const Icon(
-                            Icons.close,
-                            size: 18,
-                            color: Color(0xFFEF4444),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF97316).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${_reminderHoursSlider.toInt()}h avant',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFFF97316),
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 6),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 4,
+                        thumbShape:
+                            const RoundSliderThumbShape(enabledThumbRadius: 8),
+                      ),
+                      child: Slider(
+                        value: _reminderHoursSlider,
+                        onChanged: (value) {
+                          setState(() {
+                            _reminderHoursSlider = value;
+                          });
+                        },
+                        min: 1,
+                        max: 168, // 7 jours
+                        divisions: 167,
+                        label: '${_reminderHoursSlider.toInt()} heures',
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Les patients recevront un rappel ${_reminderHoursSlider.toInt()} heures avant leur rendez-vous.',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
+
+            const SizedBox(height: 12),
+
+            SizedBox(
+              height: 44,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1D5BFF),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                onPressed: (reminderSettingsState.status == ReminderSettingsStatus.saving ||
+                        doctor == null)
+                    ? null
+                    : () async {
+                        if (settings != null) {
+                          final updated = settings.copyWith(
+                            reminderHoursBefore: _reminderHoursSlider.toInt(),
+                          );
+                          await ref
+                              .read(doctorReminderSettingsControllerProvider.notifier)
+                              .updateSettings(updated);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Paramètres enregistrés avec succès'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                icon: reminderSettingsState.status == ReminderSettingsStatus.saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: const Text(
+                  'Enregistrer les paramètres',
+                  style: TextStyle(fontSize: 13),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Stat petits blocs
+            Row(
+              children: [
+                Expanded(
+                  child: _SmallMetricCard(
+                    icon: Icons.send_outlined,
+                    label: 'Rappels envoyés',
+                    value: remindersSent.toString(),
+                    subtitle: 'Notifications déjà envoyées',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _SmallMetricCard(
+                    icon: Icons.schedule_send_outlined,
+                    label: 'En attente',
+                    value: remindersPending.toString(),
+                    subtitle: 'À envoyer prochainement',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _SmallMetricCard(
+                    icon: Icons.check_circle_outline,
+                    label: 'Total à venir',
+                    value: confirmedAppointments.length.toString(),
+                    subtitle: 'Rendez-vous confirmés',
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            // Prochains rappels programmés
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Prochains rappels programmés',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (confirmedAppointments.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16.0),
+                        child: Center(
+                          child: Text(
+                            'Aucun rendez-vous confirmé à venir',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      ...confirmedAppointments.take(5).map((rdv) {
+                        final patientName = rdv.patient != null
+                            ? '${rdv.patient!.firstName} ${rdv.patient!.lastName}'
+                            : 'Patient';
+                        final dateLabel = DateFormat('EEEE d MMMM à HH:mm', 'fr_FR')
+                            .format(rdv.dateTime);
+                        final reminderTime = rdv.dateTime.subtract(
+                          Duration(hours: settings?.reminderHoursBefore ?? 24),
+                        );
+                        final isReminderSent = now.isAfter(reminderTime);
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: isReminderSent
+                                  ? const Color(0xFFF0FDF4)
+                                  : const Color(0xFFFFFBEB),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isReminderSent
+                                      ? Icons.check_circle_outline
+                                      : Icons.notifications_active_outlined,
+                                  size: 18,
+                                  color: isReminderSent
+                                      ? const Color(0xFF16A34A)
+                                      : const Color(0xFFF59E0B),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        patientName,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        dateLabel,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (!isReminderSent)
+                                  Text(
+                                    'Dans ${reminderTime.difference(now).inHours}h',
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: Color(0xFFF59E0B),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+            ),
 
           const SizedBox(height: 16),
 
@@ -2111,6 +2713,7 @@ class _DoctorAutoRemindersTab extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -2122,12 +2725,14 @@ class _ReminderChannelRow extends StatelessWidget {
     required this.label,
     required this.description,
     required this.active,
+    this.onChanged,
   });
 
   final IconData icon;
   final String label;
   final String description;
   final bool active;
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2170,11 +2775,12 @@ class _ReminderChannelRow extends StatelessWidget {
             ],
           ),
         ),
-        Switch(
-          value: active,
-          onChanged: null, // mock
-          activeColor: color,
-        ),
+        if (onChanged != null)
+          Switch(
+            value: active,
+            onChanged: onChanged,
+            activeColor: const Color(0xFF22C55E),
+          ),
       ],
     );
   }
@@ -2232,18 +2838,206 @@ class _AvailabilityTabChip extends StatelessWidget {
   }
 }
 
-class _AvailabilityDayCard extends StatelessWidget {
+class _AvailabilityDayCard extends ConsumerStatefulWidget {
   const _AvailabilityDayCard({
     required this.dayLabel,
-    required this.enabled,
+    required this.dayKey,
+    required this.medecinId,
+    required this.schedules,
+    required this.onScheduleChanged,
   });
 
   final String dayLabel;
-  final bool enabled;
+  final String dayKey; // Clé pour la DB (lundi, mardi, etc.)
+  final String medecinId;
+  final List<DoctorSchedule> schedules;
+  final VoidCallback onScheduleChanged;
+
+  @override
+  ConsumerState<_AvailabilityDayCard> createState() => _AvailabilityDayCardState();
+}
+
+class _AvailabilityDayCardState extends ConsumerState<_AvailabilityDayCard> {
+  bool _isEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Le jour est activé s'il y a au moins un horaire
+    _isEnabled = widget.schedules.isNotEmpty;
+  }
+
+  @override
+  void didUpdateWidget(_AvailabilityDayCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.schedules != oldWidget.schedules) {
+      _isEnabled = widget.schedules.isNotEmpty;
+    }
+  }
+
+  Future<void> _toggleDay(bool enabled) async {
+    if (!enabled && widget.schedules.isNotEmpty) {
+      // Si on désactive, demander confirmation
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Désactiver ce jour ?'),
+          content: const Text(
+            'Tous les horaires de ce jour seront supprimés. Souhaitez-vous continuer ?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Annuler'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red,
+              ),
+              child: const Text('Supprimer'),
+            ),
+          ],
+        ),
+      );
+      
+      if (confirmed != true) {
+        return;
+      }
+
+      // Supprimer tous les horaires du jour
+      final controller = ref.read(doctorScheduleControllerProvider.notifier);
+      for (final schedule in widget.schedules) {
+        await controller.deleteSchedule(schedule.id, widget.medecinId);
+      }
+    } else if (enabled && widget.schedules.isEmpty) {
+      // Si on active et qu'il n'y a pas d'horaires, créer un horaire par défaut
+      await _addDefaultSchedule();
+    }
+
+    setState(() {
+      _isEnabled = enabled;
+    });
+    widget.onScheduleChanged();
+  }
+
+  Future<void> _addDefaultSchedule() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _ScheduleTimeDialog(
+        existingSchedules: widget.schedules,
+        dayKey: widget.dayKey,
+      ),
+    );
+
+    if (result != null) {
+      final controller = ref.read(doctorScheduleControllerProvider.notifier);
+      final defaultSchedule = DoctorSchedule(
+        id: '', // Sera généré par le service
+        medecinId: widget.medecinId,
+        jour: widget.dayKey,
+        heureDebut: result['debut']!,
+        heureFin: result['fin']!,
+        dureeConsultation: result['duree'] as int? ?? 30,
+        isAvailable: true,
+      );
+      await controller.createSchedule(defaultSchedule);
+    }
+  }
+
+  Future<void> _addSchedule() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _ScheduleTimeDialog(
+        existingSchedules: widget.schedules,
+        dayKey: widget.dayKey,
+      ),
+    );
+
+    if (result != null) {
+      final controller = ref.read(doctorScheduleControllerProvider.notifier);
+      final newSchedule = DoctorSchedule(
+        id: '',
+        medecinId: widget.medecinId,
+        jour: widget.dayKey,
+        heureDebut: result['debut']!,
+        heureFin: result['fin']!,
+        dureeConsultation: result['duree'] as int? ?? 30,
+        isAvailable: true,
+      );
+      await controller.createSchedule(newSchedule);
+      widget.onScheduleChanged();
+    }
+  }
+
+  Future<void> _editSchedule(DoctorSchedule schedule) async {
+    // Exclure l'horaire actuel de la liste pour la validation des chevauchements
+    final otherSchedules = widget.schedules.where((s) => s.id != schedule.id).toList();
+    
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _ScheduleTimeDialog(
+        initialDebut: schedule.heureDebut,
+        initialFin: schedule.heureFin,
+        initialDuree: schedule.dureeConsultation,
+        existingSchedules: otherSchedules,
+        dayKey: widget.dayKey,
+      ),
+    );
+
+    if (result != null) {
+      final controller = ref.read(doctorScheduleControllerProvider.notifier);
+      final updatedSchedule = schedule.copyWith(
+        heureDebut: result['debut']!,
+        heureFin: result['fin']!,
+        dureeConsultation: result['duree'] as int? ?? schedule.dureeConsultation,
+      );
+      await controller.updateSchedule(schedule.id, updatedSchedule);
+      widget.onScheduleChanged();
+    }
+  }
+
+  Future<void> _deleteSchedule(DoctorSchedule schedule) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Supprimer cet horaire ?'),
+        content: Text(
+          'Horaires: ${schedule.heureDebut} - ${schedule.heureFin}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final controller = ref.read(doctorScheduleControllerProvider.notifier);
+      await controller.deleteSchedule(schedule.id, widget.medecinId);
+      
+      // Si c'était le dernier horaire, désactiver le jour
+      if (widget.schedules.length == 1) {
+        setState(() {
+          _isEnabled = false;
+        });
+      }
+      widget.onScheduleChanged();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isDisabled = !enabled;
+    final isDisabled = !_isEnabled;
     final textColor = isDisabled ? Colors.grey : Colors.black87;
 
     return Opacity(
@@ -2260,26 +3054,54 @@ class _AvailabilityDayCard extends StatelessWidget {
               Row(
                 children: [
                   Switch.adaptive(
-                    value: enabled,
-                    onChanged: (_) {
-                      // TODO: rendre interactif plus tard
-                    },
+                    value: _isEnabled,
+                    onChanged: _toggleDay,
                   ),
                   const SizedBox(width: 4),
-                  Text(
-                    dayLabel,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: textColor,
+                  Expanded(
+                    child: Text(
+                      widget.dayLabel,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: textColor,
+                      ),
                     ),
                   ),
+                  if (_isEnabled)
+                    IconButton(
+                      icon: const Icon(Icons.add, size: 20),
+                      onPressed: _addSchedule,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      tooltip: 'Ajouter un horaire',
+                    ),
                 ],
               ),
               const SizedBox(height: 8),
-              _TimeRangeRow(label: 'Matin', isDisabled: isDisabled),
-              const SizedBox(height: 8),
-              _TimeRangeRow(label: 'Après-midi', isDisabled: isDisabled),
+              if (_isEnabled) ...[
+                if (widget.schedules.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      'Aucun horaire défini. Cliquez sur + pour ajouter.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey[600],
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  )
+                else
+                  ...widget.schedules.map((schedule) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _TimeRangeRow(
+                          schedule: schedule,
+                          onEdit: () => _editSchedule(schedule),
+                          onDelete: () => _deleteSchedule(schedule),
+                        ),
+                      )),
+              ],
             ],
           ),
         ),
@@ -2290,48 +3112,296 @@ class _AvailabilityDayCard extends StatelessWidget {
 
 class _TimeRangeRow extends StatelessWidget {
   const _TimeRangeRow({
-    required this.label,
-    required this.isDisabled,
+    required this.schedule,
+    required this.onEdit,
+    required this.onDelete,
   });
 
-  final String label;
-  final bool isDisabled;
+  final DoctorSchedule schedule;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  /// Normalise le format d'heure pour l'affichage (HH:MM:SS -> HH:MM)
+  String _normalizeTimeDisplay(String time) {
+    if (time.contains(':') && time.split(':').length >= 2) {
+      final parts = time.split(':');
+      return '${parts[0].padLeft(2, '0')}:${parts[1].padLeft(2, '0')}';
+    }
+    return time;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final hintStyle = TextStyle(
-      fontSize: 12,
-      color: isDisabled ? Colors.grey[400] : Colors.grey[600],
-    );
-
-    return Row(
-      children: [
-        SizedBox(
-          width: 70,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: isDisabled ? Colors.grey : Colors.black87,
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TextField(
-            enabled: !isDisabled,
-            decoration: InputDecoration(
-              isDense: true,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              hintText: '08:00 - 12:00',
-              hintStyle: hintStyle,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
+    final debutDisplay = _normalizeTimeDisplay(schedule.heureDebut);
+    final finDisplay = _normalizeTimeDisplay(schedule.heureFin);
+    
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '$debutDisplay - $finDisplay',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ),
+          Text(
+            '${schedule.dureeConsultation} min',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey[600],
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.edit, size: 18),
+            onPressed: onEdit,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            color: const Color(0xFF1D5BFF),
+            tooltip: 'Modifier',
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete, size: 18),
+            onPressed: onDelete,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            color: Colors.red,
+            tooltip: 'Supprimer',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScheduleTimeDialog extends StatefulWidget {
+  const _ScheduleTimeDialog({
+    this.initialDebut,
+    this.initialFin,
+    this.initialDuree,
+    this.existingSchedules = const [],
+    this.dayKey,
+  });
+
+  final String? initialDebut;
+  final String? initialFin;
+  final int? initialDuree;
+  final List<DoctorSchedule> existingSchedules;
+  final String? dayKey; // Pour valider les chevauchements
+
+  @override
+  State<_ScheduleTimeDialog> createState() => _ScheduleTimeDialogState();
+}
+
+class _ScheduleTimeDialogState extends State<_ScheduleTimeDialog> {
+  late TextEditingController _debutController;
+  late TextEditingController _finController;
+  late TextEditingController _dureeController;
+
+  /// Normalise le format d'heure pour l'affichage (supprime les secondes)
+  String _normalizeInitialTime(String? time, String defaultValue) {
+    if (time == null || time.isEmpty) return defaultValue;
+    // Si c'est au format HH:MM:SS, prendre seulement HH:MM
+    if (time.contains(':') && time.split(':').length >= 2) {
+      final parts = time.split(':');
+      final normalized = '${parts[0].padLeft(2, '0')}:${parts[1].padLeft(2, '0')}';
+      return normalized.isEmpty ? defaultValue : normalized;
+    }
+    return time.isEmpty ? defaultValue : time;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Normaliser les heures initiales pour l'affichage
+    final debutNormalized = _normalizeInitialTime(widget.initialDebut, '08:00');
+    final finNormalized = _normalizeInitialTime(widget.initialFin, '12:00');
+    _debutController = TextEditingController(text: debutNormalized);
+    _finController = TextEditingController(text: finNormalized);
+    _dureeController = TextEditingController(
+      text: widget.initialDuree?.toString() ?? '30',
+    );
+  }
+
+  @override
+  void dispose() {
+    _debutController.dispose();
+    _finController.dispose();
+    _dureeController.dispose();
+    super.dispose();
+  }
+
+  /// Normalise le format d'heure (supprime les secondes si présentes)
+  String _normalizeTime(String time) {
+    final trimmed = time.trim();
+    // Si c'est au format HH:MM:SS, prendre seulement HH:MM
+    if (trimmed.contains(':') && trimmed.split(':').length >= 2) {
+      final parts = trimmed.split(':');
+      return '${parts[0].padLeft(2, '0')}:${parts[1].padLeft(2, '0')}';
+    }
+    return trimmed;
+  }
+
+  bool _validateTime(String time) {
+    final normalized = _normalizeTime(time);
+    final regex = RegExp(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$');
+    return regex.hasMatch(normalized);
+  }
+
+  /// Convertit une heure HH:MM en minutes depuis minuit
+  int _timeToMinutes(String time) {
+    final parts = time.split(':');
+    if (parts.length < 2) return 0;
+    final hours = int.tryParse(parts[0]) ?? 0;
+    final minutes = int.tryParse(parts[1]) ?? 0;
+    return hours * 60 + minutes;
+  }
+
+  /// Vérifie si deux plages horaires se chevauchent
+  bool _hasOverlap(String debut1, String fin1, String debut2, String fin2) {
+    final d1 = _timeToMinutes(debut1);
+    final f1 = _timeToMinutes(fin1);
+    final d2 = _timeToMinutes(debut2);
+    final f2 = _timeToMinutes(fin2);
+    
+    // Chevauchement si : (d1 < f2) && (d2 < f1)
+    return (d1 < f2) && (d2 < f1);
+  }
+
+  /// Valide qu'il n'y a pas de chevauchement avec les horaires existants
+  String? _validateNoOverlap(String debut, String fin) {
+    if (widget.dayKey == null) return null;
+    
+    for (final existing in widget.existingSchedules) {
+      if (existing.jour != widget.dayKey) continue;
+      
+      if (_hasOverlap(debut, fin, existing.heureDebut, existing.heureFin)) {
+        return 'Cet horaire chevauche avec ${existing.heureDebut} - ${existing.heureFin}';
+      }
+    }
+    return null;
+  }
+
+  void _submit() {
+    var debut = _debutController.text.trim();
+    var fin = _finController.text.trim();
+    final dureeStr = _dureeController.text.trim();
+
+    // Normaliser les formats d'heure
+    debut = _normalizeTime(debut);
+    fin = _normalizeTime(fin);
+
+    // Valider le format des heures
+    if (!_validateTime(debut) || !_validateTime(fin)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Format invalide. Utilisez HH:MM (ex: 08:00)'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Vérifier que l'heure de fin est après l'heure de début
+    if (_timeToMinutes(fin) <= _timeToMinutes(debut)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('L\'heure de fin doit être après l\'heure de début'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Valider la durée
+    final duree = int.tryParse(dureeStr);
+    if (duree == null || duree < 5 || duree > 180) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('La durée doit être entre 5 et 180 minutes'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Vérifier les chevauchements
+    final overlapError = _validateNoOverlap(debut, fin);
+    if (overlapError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(overlapError),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).pop({
+      'debut': debut,
+      'fin': fin,
+      'duree': duree,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.initialDebut == null ? 'Ajouter un horaire' : 'Modifier l\'horaire'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _debutController,
+              decoration: const InputDecoration(
+                labelText: 'Heure de début (HH:MM)',
+                hintText: '08:00',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.text,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _finController,
+              decoration: const InputDecoration(
+                labelText: 'Heure de fin (HH:MM)',
+                hintText: '12:00',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.text,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _dureeController,
+              decoration: const InputDecoration(
+                labelText: 'Durée de consultation (minutes)',
+                hintText: '30',
+                border: OutlineInputBorder(),
+                helperText: 'Entre 5 et 180 minutes',
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuler'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          child: const Text('Enregistrer'),
         ),
       ],
     );
@@ -2385,6 +3455,121 @@ class _AgendaStatCard extends StatelessWidget {
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppointmentTimeSlot extends StatelessWidget {
+  const _AppointmentTimeSlot({
+    required this.rdv,
+  });
+
+  final RendezVous rdv;
+
+  @override
+  Widget build(BuildContext context) {
+    final patientName = rdv.patient != null
+        ? '${rdv.patient!.firstName} ${rdv.patient!.lastName}'
+        : 'Patient';
+    final timeLabel = DateFormat('HH:mm', 'fr_FR').format(rdv.dateTime);
+    
+    Color statusColor;
+    String statusLabel;
+    switch (rdv.status) {
+      case RendezVousStatus.confirme:
+        statusColor = const Color(0xFF22C55E);
+        statusLabel = 'Confirmé';
+        break;
+      case RendezVousStatus.termine:
+        statusColor = const Color(0xFF3B82F6);
+        statusLabel = 'Terminé';
+        break;
+      case RendezVousStatus.enAttente:
+        statusColor = const Color(0xFFEAB308);
+        statusLabel = 'En attente';
+        break;
+      case RendezVousStatus.annule:
+        statusColor = const Color(0xFFEF4444);
+        statusLabel = 'Annulé';
+        break;
+      case RendezVousStatus.absent:
+        statusColor = const Color(0xFF6B7280);
+        statusLabel = 'Absent';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: statusColor.withOpacity(0.3),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 40,
+            decoration: BoxDecoration(
+              color: statusColor,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  timeLabel,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  patientName,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.black87,
+                  ),
+                ),
+                if (rdv.motifConsultation != null && rdv.motifConsultation!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    rdv.motifConsultation!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              statusLabel,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: statusColor,
+              ),
             ),
           ),
         ],
@@ -2477,6 +3662,773 @@ class _UpcomingAppointmentItem extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// =====================================================
+// COMPOSANTS POUR LES PAUSES ET CONGÉS
+// =====================================================
+
+class _PausesTab extends ConsumerStatefulWidget {
+  const _PausesTab({required this.medecinId});
+
+  final String medecinId;
+
+  @override
+  ConsumerState<_PausesTab> createState() => _PausesTabState();
+}
+
+class _PausesTabState extends ConsumerState<_PausesTab> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.medecinId.isNotEmpty) {
+        ref.read(doctorUnavailabilityControllerProvider.notifier).load(widget.medecinId);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(doctorUnavailabilityControllerProvider);
+    final pauses = state.pauses;
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        if (widget.medecinId.isNotEmpty) {
+          await ref.read(doctorUnavailabilityControllerProvider.notifier).refresh(widget.medecinId);
+        }
+      },
+      child: _UnavailabilityList(
+        title: 'Mes Pauses',
+        subtitle: 'Les pauses bloquent les créneaux sur une courte période (< 24h)',
+        unavailabilities: pauses,
+        medecinId: widget.medecinId,
+        isPause: true,
+        onAdd: () => _showAddPauseDialog(context),
+      ),
+    );
+  }
+
+  Future<void> _showAddPauseDialog(BuildContext context) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => const _UnavailabilityDialog(isPause: true),
+    );
+
+    if (result != null && widget.medecinId.isNotEmpty) {
+      final controller = ref.read(doctorUnavailabilityControllerProvider.notifier);
+      final unavailability = DoctorUnavailability(
+        id: '',
+        medecinId: widget.medecinId,
+        dateDebut: result['debut'] as DateTime,
+        dateFin: result['fin'] as DateTime,
+        raison: result['raison'] as String?,
+      );
+      await controller.createUnavailability(unavailability);
+    }
+  }
+}
+
+class _CongesTab extends ConsumerStatefulWidget {
+  const _CongesTab({required this.medecinId});
+
+  final String medecinId;
+
+  @override
+  ConsumerState<_CongesTab> createState() => _CongesTabState();
+}
+
+class _CongesTabState extends ConsumerState<_CongesTab> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.medecinId.isNotEmpty) {
+        ref.read(doctorUnavailabilityControllerProvider.notifier).load(widget.medecinId);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(doctorUnavailabilityControllerProvider);
+    final conges = state.conges;
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        if (widget.medecinId.isNotEmpty) {
+          await ref.read(doctorUnavailabilityControllerProvider.notifier).refresh(widget.medecinId);
+        }
+      },
+      child: _UnavailabilityList(
+        title: 'Mes Congés',
+        subtitle: 'Les congés bloquent les créneaux sur une période longue (≥ 24h)',
+        unavailabilities: conges,
+        medecinId: widget.medecinId,
+        isPause: false,
+        onAdd: () => _showAddCongesDialog(context),
+      ),
+    );
+  }
+
+  Future<void> _showAddCongesDialog(BuildContext context) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => const _UnavailabilityDialog(isPause: false),
+    );
+
+    if (result != null && widget.medecinId.isNotEmpty) {
+      final controller = ref.read(doctorUnavailabilityControllerProvider.notifier);
+      final unavailability = DoctorUnavailability(
+        id: '',
+        medecinId: widget.medecinId,
+        dateDebut: result['debut'] as DateTime,
+        dateFin: result['fin'] as DateTime,
+        raison: result['raison'] as String?,
+      );
+      await controller.createUnavailability(unavailability);
+    }
+  }
+}
+
+class _UnavailabilityList extends ConsumerWidget {
+  const _UnavailabilityList({
+    required this.title,
+    required this.subtitle,
+    required this.unavailabilities,
+    required this.medecinId,
+    required this.isPause,
+    required this.onAdd,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<DoctorUnavailability> unavailabilities;
+  final String medecinId;
+  final bool isPause;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(doctorUnavailabilityControllerProvider);
+
+    if (state.isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        SizedBox(
+          height: 42,
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1D5BFF),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            onPressed: onAdd,
+            icon: const Icon(Icons.add, size: 18),
+            label: Text('Ajouter ${isPause ? 'une pause' : 'des congés'}'),
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (unavailabilities.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Column(
+                children: [
+                  Icon(
+                    isPause ? Icons.pause_circle_outline : Icons.beach_access_outlined,
+                    size: 48,
+                    color: Colors.grey,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Aucune ${isPause ? 'pause' : 'congé'} définie',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ...unavailabilities.map((unavailability) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _UnavailabilityCard(
+                  unavailability: unavailability,
+                  medecinId: medecinId,
+                ),
+              )),
+      ],
+    );
+  }
+}
+
+class _UnavailabilityCard extends ConsumerWidget {
+  const _UnavailabilityCard({
+    required this.unavailability,
+    required this.medecinId,
+  });
+
+  final DoctorUnavailability unavailability;
+  final String medecinId;
+
+  Future<void> _edit(BuildContext context, WidgetRef ref) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _UnavailabilityDialog(
+        isPause: unavailability.isPause,
+        initialDebut: unavailability.dateDebut,
+        initialFin: unavailability.dateFin,
+        initialRaison: unavailability.raison,
+      ),
+    );
+
+    if (result != null) {
+      final controller = ref.read(doctorUnavailabilityControllerProvider.notifier);
+      final updated = unavailability.copyWith(
+        dateDebut: result['debut'] as DateTime,
+        dateFin: result['fin'] as DateTime,
+        raison: result['raison'] as String?,
+      );
+      await controller.updateUnavailability(unavailability.id, updated);
+    }
+  }
+
+  Future<void> _delete(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Supprimer ${unavailability.isPause ? 'cette pause' : 'ces congés'} ?'),
+        content: Text(
+          'Du ${DateFormat('dd/MM/yyyy HH:mm', 'fr_FR').format(unavailability.dateDebut)} '
+          'au ${DateFormat('dd/MM/yyyy HH:mm', 'fr_FR').format(unavailability.dateFin)}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final controller = ref.read(doctorUnavailabilityControllerProvider.notifier);
+      await controller.deleteUnavailability(unavailability.id, medecinId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final dateFormat = DateFormat('dd/MM/yyyy HH:mm', 'fr_FR');
+
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  unavailability.isPause ? Icons.pause_circle_outline : Icons.beach_access_outlined,
+                  color: unavailability.isPause ? Colors.orange : Colors.red,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    dateFormat.format(unavailability.dateDebut),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.edit, size: 18),
+                  onPressed: () => _edit(context, ref),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  color: const Color(0xFF1D5BFF),
+                  tooltip: 'Modifier',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete, size: 18),
+                  onPressed: () => _delete(context, ref),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  color: Colors.red,
+                  tooltip: 'Supprimer',
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Jusqu\'au ${dateFormat.format(unavailability.dateFin)}',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            if (unavailability.raison != null && unavailability.raison!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Raison: ${unavailability.raison}',
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UnavailabilityDialog extends StatefulWidget {
+  const _UnavailabilityDialog({
+    required this.isPause,
+    this.initialDebut,
+    this.initialFin,
+    this.initialRaison,
+  });
+
+  final bool isPause;
+  final DateTime? initialDebut;
+  final DateTime? initialFin;
+  final String? initialRaison;
+
+  @override
+  State<_UnavailabilityDialog> createState() => _UnavailabilityDialogState();
+}
+
+class _UnavailabilityDialogState extends State<_UnavailabilityDialog> {
+  late DateTime _dateDebut;
+  late DateTime _dateFin;
+  late TimeOfDay _heureDebut;
+  late TimeOfDay _heureFin;
+  late TextEditingController _raisonController;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _dateDebut = widget.initialDebut ?? now;
+    _dateFin = widget.initialFin ?? (widget.isPause ? now.add(const Duration(hours: 2)) : now.add(const Duration(days: 1)));
+    _heureDebut = TimeOfDay.fromDateTime(_dateDebut);
+    _heureFin = TimeOfDay.fromDateTime(_dateFin);
+    _raisonController = TextEditingController(text: widget.initialRaison);
+  }
+
+  @override
+  void dispose() {
+    _raisonController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _selectDateDebut() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dateDebut,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      locale: const Locale('fr', 'FR'),
+    );
+    if (picked != null) {
+      setState(() {
+        _dateDebut = DateTime(picked.year, picked.month, picked.day, _heureDebut.hour, _heureDebut.minute);
+      });
+    }
+  }
+
+  Future<void> _selectHeureDebut() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _heureDebut,
+    );
+    if (picked != null) {
+      setState(() {
+        _heureDebut = picked;
+        _dateDebut = DateTime(_dateDebut.year, _dateDebut.month, _dateDebut.day, picked.hour, picked.minute);
+      });
+    }
+  }
+
+  Future<void> _selectDateFin() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dateFin,
+      firstDate: _dateDebut,
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      locale: const Locale('fr', 'FR'),
+    );
+    if (picked != null) {
+      setState(() {
+        _dateFin = DateTime(picked.year, picked.month, picked.day, _heureFin.hour, _heureFin.minute);
+      });
+    }
+  }
+
+  Future<void> _selectHeureFin() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _heureFin,
+    );
+    if (picked != null) {
+      setState(() {
+        _heureFin = picked;
+        _dateFin = DateTime(_dateFin.year, _dateFin.month, _dateFin.day, picked.hour, picked.minute);
+      });
+    }
+  }
+
+  void _submit() {
+    if (_dateFin.isBefore(_dateDebut) || _dateFin.isAtSameMomentAs(_dateDebut)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('La date de fin doit être après la date de début'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).pop({
+      'debut': _dateDebut,
+      'fin': _dateFin,
+      'raison': _raisonController.text.trim().isEmpty ? null : _raisonController.text.trim(),
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.initialDebut == null 
+          ? 'Ajouter ${widget.isPause ? 'une pause' : 'des congés'}'
+          : 'Modifier ${widget.isPause ? 'la pause' : 'les congés'}'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.calendar_today),
+              title: const Text('Date de début'),
+              subtitle: Text(DateFormat('dd/MM/yyyy', 'fr_FR').format(_dateDebut)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _selectDateDebut,
+            ),
+            ListTile(
+              leading: const Icon(Icons.access_time),
+              title: const Text('Heure de début'),
+              subtitle: Text(_heureDebut.format(context)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _selectHeureDebut,
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.calendar_today),
+              title: const Text('Date de fin'),
+              subtitle: Text(DateFormat('dd/MM/yyyy', 'fr_FR').format(_dateFin)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _selectDateFin,
+            ),
+            ListTile(
+              leading: const Icon(Icons.access_time),
+              title: const Text('Heure de fin'),
+              subtitle: Text(_heureFin.format(context)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _selectHeureFin,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _raisonController,
+              decoration: const InputDecoration(
+                labelText: 'Raison (optionnel)',
+                hintText: 'Ex: Pause déjeuner, Congés annuels...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuler'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          child: const Text('Enregistrer'),
+        ),
+      ],
+    );
+  }
+}
+
+// =====================================================
+// DIALOGUE DE MODIFICATION DE RENDEZ-VOUS
+// =====================================================
+
+class _EditAppointmentDialog extends StatefulWidget {
+  const _EditAppointmentDialog({required this.appointment});
+
+  final RendezVous appointment;
+
+  @override
+  State<_EditAppointmentDialog> createState() => _EditAppointmentDialogState();
+}
+
+class _EditAppointmentDialogState extends State<_EditAppointmentDialog> {
+  late DateTime _selectedDate;
+  late TimeOfDay _selectedTime;
+  late TextEditingController _dureeController;
+  late TextEditingController _notesController;
+  bool _hasChanges = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDate = widget.appointment.dateTime;
+    _selectedTime = TimeOfDay.fromDateTime(widget.appointment.dateTime);
+    _dureeController = TextEditingController(
+      text: widget.appointment.duree?.toString() ?? '30',
+    );
+    _notesController = TextEditingController(
+      text: widget.appointment.notesMedecin ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _dureeController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _selectDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      locale: const Locale('fr', 'FR'),
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = DateTime(
+          picked.year,
+          picked.month,
+          picked.day,
+          _selectedTime.hour,
+          _selectedTime.minute,
+        );
+        _hasChanges = true;
+      });
+    }
+  }
+
+  Future<void> _selectTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime,
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedTime = picked;
+        _selectedDate = DateTime(
+          _selectedDate.year,
+          _selectedDate.month,
+          _selectedDate.day,
+          picked.hour,
+          picked.minute,
+        );
+        _hasChanges = true;
+      });
+    }
+  }
+
+  void _submit() {
+    // Valider la durée
+    final duree = int.tryParse(_dureeController.text.trim());
+    if (duree == null || duree < 5 || duree > 180) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('La durée doit être entre 5 et 180 minutes'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Vérifier que la date/heure n'est pas dans le passé
+    if (_selectedDate.isBefore(DateTime.now())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('La date et l\'heure ne peuvent pas être dans le passé'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final Map<String, dynamic> result = {};
+
+    // Vérifier si la date/heure a changé
+    if (!_selectedDate.isAtSameMomentAs(widget.appointment.dateTime)) {
+      result['dateTime'] = _selectedDate;
+    }
+
+    // Vérifier si la durée a changé
+    if (duree != widget.appointment.duree) {
+      result['duree'] = duree;
+    }
+
+    // Vérifier si les notes ont changé
+    final notes = _notesController.text.trim();
+    if (notes != (widget.appointment.notesMedecin ?? '')) {
+      result['notesMedecin'] = notes;
+    }
+
+    Navigator.of(context).pop(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final patientName = widget.appointment.patient != null
+        ? '${widget.appointment.patient!.firstName} ${widget.appointment.patient!.lastName}'
+        : 'Patient';
+
+    return AlertDialog(
+      title: const Text('Modifier le rendez-vous'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Informations patient (lecture seule)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.person_outline, size: 20, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Patient',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          patientName,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Date
+            ListTile(
+              leading: const Icon(Icons.calendar_today),
+              title: const Text('Date'),
+              subtitle: Text(DateFormat('dd/MM/yyyy', 'fr_FR').format(_selectedDate)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _selectDate,
+            ),
+
+            // Heure
+            ListTile(
+              leading: const Icon(Icons.access_time),
+              title: const Text('Heure'),
+              subtitle: Text(_selectedTime.format(context)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _selectTime,
+            ),
+
+            const Divider(),
+
+            // Durée
+            TextField(
+              controller: _dureeController,
+              decoration: const InputDecoration(
+                labelText: 'Durée (minutes)',
+                hintText: '30',
+                border: OutlineInputBorder(),
+                helperText: 'Entre 5 et 180 minutes',
+                prefixIcon: Icon(Icons.schedule),
+              ),
+              keyboardType: TextInputType.number,
+              onChanged: (_) => setState(() => _hasChanges = true),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Notes médecin
+            TextField(
+              controller: _notesController,
+              decoration: const InputDecoration(
+                labelText: 'Notes médecin',
+                hintText: 'Ajoutez vos notes sur cette consultation...',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.note_outlined),
+              ),
+              maxLines: 4,
+              onChanged: (_) => setState(() => _hasChanges = true),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuler'),
+        ),
+        ElevatedButton(
+          onPressed: _hasChanges ? _submit : null,
+          child: const Text('Enregistrer'),
+        ),
+      ],
     );
   }
 }

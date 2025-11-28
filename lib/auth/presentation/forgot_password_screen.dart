@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -27,18 +28,32 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
     setState(() => _submitting = true);
 
-    // TODO: implémenter l’envoi de l’email de réinitialisation.
-    await Future.delayed(const Duration(seconds: 1));
+    final email = _emailController.text.trim();
+    try {
+      await Supabase.instance.client.auth.resetPasswordForEmail(email);
 
-    if (!mounted) return;
-
-    setState(() => _submitting = false);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Lien de réinitialisation envoyé (mock).'),
-      ),
-    );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Email de réinitialisation envoyé.')),
+      );
+    } on AuthException catch (error) {
+      if (!mounted) return;
+      final message = error.message.trim().isEmpty
+          ? 'Impossible d’envoyer l’email.'
+          : error.message;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Une erreur est survenue.')));
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
   }
 
   @override
@@ -53,10 +68,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              backgroundGradientTop,
-              backgroundGradientBottom,
-            ],
+            colors: [backgroundGradientTop, backgroundGradientBottom],
           ),
         ),
         child: SafeArea(
@@ -185,8 +197,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                             strokeWidth: 2,
                                             valueColor:
                                                 AlwaysStoppedAnimation<Color>(
-                                              Colors.white,
-                                            ),
+                                                  Colors.white,
+                                                ),
                                           ),
                                         )
                                       : const Text('Envoyer le lien'),
@@ -197,10 +209,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
                               TextButton.icon(
                                 onPressed: () => Navigator.of(context).pop(),
-                                icon: const Icon(
-                                  Icons.login_rounded,
-                                  size: 18,
-                                ),
+                                icon: const Icon(Icons.login_rounded, size: 18),
                                 label: const Text('Retour à la connexion'),
                               ),
                             ],

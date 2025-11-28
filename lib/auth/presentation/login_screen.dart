@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +8,7 @@ import '../../core/domain/user_role.dart';
 import '../../dashboard/presentation/dashboard_screen.dart';
 import '../../doctor/presentation/doctor_dashboard_screen.dart';
 import '../application/auth_controller.dart';
+import '../../core/services/auth_service.dart';
 import 'signup_screen.dart';
 import 'forgot_password_screen.dart';
 
@@ -26,7 +29,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   bool _submitting = false;
   bool _obscurePassword = true;
-  String _selectedRole = 'patient'; // 'patient' ou 'medecin'
 
   @override
   void dispose() {
@@ -38,19 +40,53 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _submitting = true);
-    final role =
-        _selectedRole == 'medecin' ? UserRole.medecin : UserRole.patient;
-    await ref.read(authControllerProvider.notifier).login(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-          role: role,
-        );
-    if (mounted) {
-      setState(() => _submitting = false);
-      if (role == UserRole.medecin) {
-        context.go(DoctorDashboardScreen.routePath);
-      } else {
-      context.go(DashboardScreen.routePath);
+    
+    try {
+      // Connexion avec détection automatique du rôle
+      final detectedRole = await ref
+          .read(authControllerProvider.notifier)
+          .loginAuto(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+          );
+
+      if (detectedRole == null) {
+        _showError('Identifiants invalides.');
+        return;
+      }
+
+      final authState = ref.read(authControllerProvider);
+      if (authState.status == AuthStatus.authenticated) {
+        if (!mounted) return;
+        
+        // Rediriger selon le rôle détecté
+        if (detectedRole == UserRole.medecin) {
+          context.go(DoctorDashboardScreen.routePath);
+        } else {
+          context.go(DashboardScreen.routePath);
+        }
+      }
+    } on AuthFailure catch (error, stackTrace) {
+      developer.log(
+        'Login failed',
+        error: error,
+        stackTrace: stackTrace,
+        name: 'LoginScreen',
+      );
+      _showError(error.message);
+    } catch (error, stackTrace) {
+      developer.log(
+        'Unexpected error during login: $error',
+        error: error,
+        stackTrace: stackTrace,
+        name: 'LoginScreen',
+      );
+      _showError(
+        'Une erreur inattendue est survenue: ${error.toString()}',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
       }
     }
   }
@@ -67,10 +103,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              backgroundGradientTop,
-              backgroundGradientBottom,
-            ],
+            colors: [backgroundGradientTop, backgroundGradientBottom],
           ),
         ),
         child: SafeArea(
@@ -165,42 +198,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                               const SizedBox(height: 24),
 
-                              const Text('Je suis :'),
-                              const SizedBox(height: 8),
-
-                              // Sélecteur Patient / Médecin
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: _RoleButton(
-                                      label: 'Patient',
-                                      icon: Icons.person_outline,
-                                      isSelected: _selectedRole == 'patient',
-                                      onTap: () {
-                                        setState(() {
-                                          _selectedRole = 'patient';
-                                        });
-                                      },
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: _RoleButton(
-                                      label: 'Médecin',
-                                      icon: Icons.health_and_safety_outlined,
-                                      isSelected: _selectedRole == 'medecin',
-                                      onTap: () {
-                                        setState(() {
-                                          _selectedRole = 'medecin';
-                                        });
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-
-                              const SizedBox(height: 24),
-
                               // Email
                               TextFormField(
                                 controller: _emailController,
@@ -225,8 +222,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 obscureText: _obscurePassword,
                                 decoration: InputDecoration(
                                   labelText: 'Mot de passe',
-                                  prefixIcon:
-                                      const Icon(Icons.lock_outline_rounded),
+                                  prefixIcon: const Icon(
+                                    Icons.lock_outline_rounded,
+                                  ),
                                   suffixIcon: IconButton(
                                     icon: Icon(
                                       _obscurePassword
@@ -252,8 +250,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               Align(
                                 alignment: Alignment.centerRight,
                                 child: TextButton(
-                                  onPressed: () => context
-                                      .push(ForgotPasswordScreen.routePath),
+                                  onPressed: () => context.push(
+                                    ForgotPasswordScreen.routePath,
+                                  ),
                                   child: const Text('Mot de passe oublié ?'),
                                 ),
                               ),
@@ -278,8 +277,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                             strokeWidth: 2,
                                             valueColor:
                                                 AlwaysStoppedAnimation<Color>(
-                                              Colors.white,
-                                            ),
+                                                  Colors.white,
+                                                ),
                                           ),
                                         )
                                       : const Text('Se connecter'),
@@ -298,10 +297,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         'En vous connectant, vous acceptez nos conditions '
                         "d’utilisation et notre politique de confidentialité.",
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey,
-                        ),
+                        style: TextStyle(fontSize: 10, color: Colors.grey),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -313,6 +309,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ),
       ),
     );
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -351,51 +354,3 @@ class _SegmentButton extends StatelessWidget {
   }
 }
 
-class _RoleButton extends StatelessWidget {
-  const _RoleButton({
-    required this.label,
-    required this.icon,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isSelected ? const Color(0xFF1D5BFF) : Colors.grey[400];
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap,
-      child: Container(
-        height: 60,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isSelected ? color! : (Colors.grey[300]!),
-            width: isSelected ? 1.5 : 1,
-          ),
-          color: isSelected ? color!.withOpacity(0.05) : Colors.white,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 18, color: color),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: color,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

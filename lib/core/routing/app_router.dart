@@ -9,12 +9,15 @@ import '../../auth/presentation/signup_screen.dart';
 import '../../auth/presentation/forgot_password_screen.dart';
 import '../../dashboard/presentation/dashboard_screen.dart';
 import '../../doctor/presentation/doctor_dashboard_screen.dart';
+import '../../doctor/presentation/doctor_profile_screen.dart';
 import '../../appointments/presentation/appointments_list_screen.dart';
+import '../../appointments/presentation/select_date_time_screen.dart';
 import '../../history/presentation/history_screen.dart';
 import '../../profile/presentation/profile_screen.dart';
 import '../../notifications/presentation/notifications_screen.dart';
 import '../../auth/application/auth_controller.dart';
 import '../domain/user_role.dart';
+import '../../core/domain/medecin.dart';
 
 /// Centralized definition of all routes in the Patient app.
 GoRouter createAppRouter(WidgetRef ref) {
@@ -50,6 +53,11 @@ GoRouter createAppRouter(WidgetRef ref) {
         builder: (context, state) => const DoctorDashboardScreen(),
       ),
       GoRoute(
+        path: DoctorProfileScreen.routePath,
+        name: DoctorProfileScreen.routeName,
+        builder: (context, state) => const DoctorProfileScreen(),
+      ),
+      GoRoute(
         path: DashboardScreen.routePath,
         name: DashboardScreen.routeName,
         builder: (context, state) => const DashboardScreen(),
@@ -73,6 +81,21 @@ GoRouter createAppRouter(WidgetRef ref) {
             path: NotificationsScreen.subRoutePath,
             name: NotificationsScreen.routeName,
             builder: (context, state) => const NotificationsScreen(),
+          ),
+          GoRoute(
+            path: SelectDateTimeScreen.subRoutePath,
+            name: SelectDateTimeScreen.routeName,
+            builder: (context, state) {
+              final medecin = state.extra as Medecin?;
+              if (medecin == null) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Erreur: Médecin non trouvé'),
+                  ),
+                );
+              }
+              return SelectDateTimeScreen(medecin: medecin);
+            },
           ),
         ],
       ),
